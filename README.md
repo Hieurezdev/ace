@@ -78,13 +78,17 @@ This design prevents the **context collapse** problem where iterative rewriting 
 ```bash
 # Clone the repository
 git clone https://github.com/ace-agent/ace.git
+cd ace
 
-# Install dependencies
-pip install -r requirements.txt
+# Install uv (if not already installed)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Install ACE and core dependencies
+uv sync
 
 # Set up API keys
 cp .env.example .env
-# Edit .env with your API keys
+# Edit .env and set the API key(s) you need
 ```
 
 ### Basic Usage
@@ -159,26 +163,26 @@ The `finance/run.py` script provides a unified interface for training and evalua
 
 ```bash
 # Offline training (with automatic initial and final testing)
-python -m eval.finance.run \
+uv run python -m eval.finance.run \
     --task_name finer \
     --mode offline \
     --save_path results
 
 # Online training and testing
-python -m eval.finance.run \
+uv run python -m eval.finance.run \
     --task_name finer \
     --mode online \
     --save_path results
 
 # Run evaluation on the test split only. Provide a pre-trained playbook or leave initial_playbook_path empty to evaluate an uninitialized playbook.
-python -m eval.finance.run \
+uv run python -m eval.finance.run \
     --task_name finer \
     --mode eval_only \
     --initial_playbook_path results/ace_run_TIMESTAMP_finer_offline/best_playbook.txt \
     --save_path test_results
 
 # Training with custom configuration
-python -m eval.finance.run \
+uv run python -m eval.finance.run \
     --task_name finer \
     --mode offline \
     --save_path results \
