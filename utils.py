@@ -159,12 +159,13 @@ def count_tokens(prompt: str) -> int:
 def evaluate_single_test_sample(args_tuple, data_processor) -> Tuple[Dict, str]:
     """
     Evaluate a single test sample - task-agnostic implementation.
-    
+
     Args:
-        args_tuple: Tuple of (index, task_dict, generator, playbook, max_tokens, log_dir, use_json_mode)
+        args_tuple: Tuple of (index, task_dict, generator, playbook, max_tokens,
+                             log_dir, use_json_mode, retriever)
         data_processor: DataProcessor instance with answer_is_correct method
     """
-    (i, task_dict, generator, playbook, max_tokens, log_dir, use_json_mode) = args_tuple
+    (i, task_dict, generator, playbook, max_tokens, log_dir, use_json_mode, retriever) = args_tuple
     try:
         context = task_dict["context"]
         question = task_dict["question"]
@@ -177,7 +178,8 @@ def evaluate_single_test_sample(args_tuple, data_processor) -> Tuple[Dict, str]:
             reflection="(empty)",
             use_json_mode=use_json_mode,
             call_id=f"test_eval_{i}",
-            log_dir=log_dir
+            log_dir=log_dir,
+            retriever=retriever
         )
 
         final_answer = extract_answer(gen_response)
@@ -196,11 +198,11 @@ def evaluate_single_test_sample(args_tuple, data_processor) -> Tuple[Dict, str]:
 
 
 def evaluate_test_set(data_processor, generator, playbook, test_samples,
-                      max_tokens=4096, log_dir=None, max_workers=20, 
-                      use_json_mode=False) -> Tuple[Dict, Dict]:
+                      max_tokens=4096, log_dir=None, max_workers=20,
+                      use_json_mode=False, retriever=None) -> Tuple[Dict, Dict]:
     """
     Parallel evaluation of test set - task-agnostic implementation.
-    
+
     Args:
         data_processor: DataProcessor instance with answer_is_correct and evaluate_accuracy methods
         generator: Generator instance
@@ -210,7 +212,8 @@ def evaluate_test_set(data_processor, generator, playbook, test_samples,
         log_dir: Directory for logs
         max_workers: Number of parallel workers
         use_json_mode: Whether to use JSON mode
-        
+        retriever: Optional PlaybookRetriever for RAE (Top-K bullet retrieval at generation time)
+
     Returns:
         Tuple of (results_dict, error_logs_dict)
     """
@@ -219,7 +222,7 @@ def evaluate_test_set(data_processor, generator, playbook, test_samples,
     print(f"{'='*40}")
 
     args_list = [
-        (i, sample, generator, playbook, max_tokens, log_dir, use_json_mode)
+        (i, sample, generator, playbook, max_tokens, log_dir, use_json_mode, retriever)
         for i, sample in enumerate(test_samples)
     ]
 

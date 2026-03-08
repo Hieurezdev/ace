@@ -74,6 +74,13 @@ def parse_args():
                         help="Enable bulletpoint analyzer for deduplication and merging")
     parser.add_argument("--bulletpoint_analyzer_threshold", type=float, default=0.90,
                         help="Similarity threshold for bulletpoint analyzer (0-1, default: 0.90)")
+
+    # RAE configuration
+    parser.add_argument("--use_rae", action="store_true",
+                        help="Enable Retrieval-Augmented Execution at the Generator "
+                             "(retrieves Top-K relevant bullets per query via BGE-M3 + FAISS)")
+    parser.add_argument("--rae_top_k", type=int, default=10,
+                        help="Number of Top-K bullets to retrieve per query when RAE is enabled (default: 10)")
     
     # Output configuration
     parser.add_argument("--save_path", type=str, required=True,
@@ -202,7 +209,9 @@ def main():
         max_tokens=args.max_tokens,
         initial_playbook=initial_playbook,
         use_bulletpoint_analyzer=args.use_bulletpoint_analyzer,
-        bulletpoint_analyzer_threshold=args.bulletpoint_analyzer_threshold
+        bulletpoint_analyzer_threshold=args.bulletpoint_analyzer_threshold,
+        use_rae=args.use_rae,
+        rae_top_k=args.rae_top_k
     )
     
     # Prepare configuration
@@ -223,6 +232,8 @@ def main():
         'initial_playbook_path': args.initial_playbook_path,
         'use_bulletpoint_analyzer': args.use_bulletpoint_analyzer,
         'bulletpoint_analyzer_threshold': args.bulletpoint_analyzer_threshold,
+        'use_rae': args.use_rae,
+        'rae_top_k': args.rae_top_k,
         'api_provider': args.api_provider
     }
     

@@ -13,7 +13,7 @@ import json
 from datetime import datetime
 from typing import Dict, List, Tuple, Optional, Any
 
-from .core import Generator, Reflector, Curator, BulletpointAnalyzer
+from .core import Generator, Reflector, Curator, BulletpointAnalyzer, PlaybookRetriever
 from playbook_utils import *
 from logger import *
 from utils import *
@@ -39,7 +39,9 @@ class ACE:
         max_tokens: int = 4096,
         initial_playbook: Optional[str] = None,
         use_bulletpoint_analyzer: bool = False,
-        bulletpoint_analyzer_threshold: float = 0.90
+        bulletpoint_analyzer_threshold: float = 0.90,
+        use_rae: bool = False,
+        rae_top_k: int = 10,
     ):
         """
         Initialize the ACE system.
@@ -53,6 +55,8 @@ class ACE:
             initial_playbook: Initial playbook content (optional)
             use_bulletpoint_analyzer: Whether to use bulletpoint analyzer for deduplication
             bulletpoint_analyzer_threshold: Similarity threshold for bulletpoint analyzer (0-1)
+            use_rae: Enable Retrieval-Augmented Execution at the Generator (Top-K bullet retrieval)
+            rae_top_k: Number of Top-K bullets to retrieve per query when RAE is enabled
         """
         # Initialize API clients
         generator_client, reflector_client, curator_client = initialize_clients(api_provider)
@@ -75,6 +79,19 @@ class ACE:
             print(f"✓ BulletpointAnalyzer initialized (threshold={bulletpoint_analyzer_threshold})")
         else:
             self.bulletpoint_analyzer = None
+
+        # Initialize PlaybookRetriever (RAE) if requested
+        self.use_rae = use_rae
+        self.rae_top_k = rae_top_k
+        if use_rae:
+            self.playbook_retriever = PlaybookRetriever(
+                embedding_model_name='BAAI/bge-m3',
+                embedding_dim=1024,
+                top_k=rae_top_k
+            )
+            print(f"✓ PlaybookRetriever (RAE) initialized (top_k={rae_top_k}, model=BAAI/bge-m3)")
+        else:
+            self.playbook_retriever = None
         
         # Store configuration
         self.generator_client = generator_client
@@ -87,10 +104,15 @@ class ACE:
             self.playbook = initial_playbook
         else:
             self.playbook = self._initialize_empty_playbook()
-        
+
         self.best_playbook = self.playbook
         # Track global bullet ID
         self.next_global_id = 1
+
+        # Pre-build RAE index from the initial playbook so retrieval works from step 1
+        # (BGE-M3 is lazy-loaded here: downloaded to ~/.cache/huggingface/ if not cached)
+        if self.use_rae and self.playbook_retriever:
+            self.playbook_retriever.update_index(self.playbook)
     
     def _initialize_empty_playbook(self) -> str:
         """Initialize an empty playbook with standard sections."""
@@ -131,7 +153,9 @@ class ACE:
             'save_dir': config.get('save_dir', './results'),
             'test_workers': config.get('test_workers', 20),
             'use_bulletpoint_analyzer': config.get('use_bulletpoint_analyzer', False),
-            'bulletpoint_analyzer_threshold': config.get('bulletpoint_analyzer_threshold', 0.90)
+            'bulletpoint_analyzer_threshold': config.get('bulletpoint_analyzer_threshold', 0.90),
+            'use_rae': config.get('use_rae', False),
+            'rae_top_k': config.get('rae_top_k', 10),
         }
     
     def _setup_paths(self, save_dir: str, task_name: str, mode: str) -> Tuple[str, str]:
@@ -406,7 +430,8 @@ class ACE:
             self.max_tokens,
             log_dir,
             max_workers=test_workers,
-            use_json_mode=use_json_mode
+            use_json_mode=use_json_mode,
+            retriever=self.playbook_retriever
         )
 
         # Save test results
@@ -469,7 +494,8 @@ class ACE:
             reflection="(empty)",
             use_json_mode=use_json_mode,
             call_id=f"{step_id}_gen_initial",
-            log_dir=log_dir
+            log_dir=log_dir,
+            retriever=self.playbook_retriever
         )
         
         # Extract answer and check correctness
@@ -534,7 +560,8 @@ class ACE:
                     reflection=reflection_content,
                     use_json_mode=use_json_mode,
                     call_id=f"{step_id}_post_reflect_round_{round_num}",
-                    log_dir=log_dir
+                    log_dir=log_dir,
+                    retriever=self.playbook_retriever
                 )
                 
                 final_answer = extract_answer(gen_response)
@@ -604,6 +631,10 @@ class ACE:
                     threshold=self.bulletpoint_analyzer_threshold,
                     merge=True
                 )
+
+            # Rebuild RAE index with the updated playbook
+            if self.use_rae and self.playbook_retriever:
+                self.playbook_retriever.update_index(self.playbook)
         
         # STEP 4: Post-curator generation
         gen_response, _, _ = self.generator.generate(
@@ -613,7 +644,8 @@ class ACE:
             reflection="(empty)",
             use_json_mode=use_json_mode,
             call_id=f"{step_id}_post_curate",
-            log_dir=log_dir
+            log_dir=log_dir,
+            retriever=self.playbook_retriever
         )
         
         final_answer = extract_answer(gen_response)
@@ -750,9 +782,10 @@ class ACE:
                     val_results = {}
                     if val_samples:
                         val_results, val_error_log = evaluate_test_set(
-                            data_processor, self.generator, self.playbook, 
-                            val_samples, self.max_tokens, log_dir, 
-                            max_workers=test_workers, use_json_mode=use_json_mode
+                            data_processor, self.generator, self.playbook,
+                            val_samples, self.max_tokens, log_dir,
+                            max_workers=test_workers, use_json_mode=use_json_mode,
+                            retriever=self.playbook_retriever
                         )
                     
                     result = {
@@ -960,7 +993,8 @@ class ACE:
                 self.max_tokens,
                 log_dir,
                 max_workers=test_workers,
-                use_json_mode=use_json_mode
+                use_json_mode=use_json_mode,
+                retriever=self.playbook_retriever
             )
             
             # Extract results
