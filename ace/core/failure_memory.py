@@ -168,6 +168,8 @@ class FailureMemoryBank:
         }
         self._entries.append(entry)
         self._rebuild_index()
+        print(f"[FailureMemory] Stored failure #{self.size} | "
+              f"q='{question[:80].strip()}...' | bank_size={self.size}")
 
     def retrieve(
         self,
@@ -200,6 +202,12 @@ class FailureMemoryBank:
             entry['similarity'] = float(score)
             entry['rank'] = rank + 1
             results.append(entry)
+        if results:
+            top = results[0]
+            print(f"[FailureMemory] Retrieved {len(results)} similar failure(s) "
+                  f"(bank_size={self.size}) | "
+                  f"top similarity={top['similarity']:.3f} | "
+                  f"top q='{top['question'][:60].strip()}...'")
         return results
 
     @staticmethod
