@@ -6,6 +6,7 @@ Analyzes generator outputs and provides feedback on bullet usage.
 import json
 from typing import Dict, List, Tuple, Optional, Any
 from ..prompts.reflector import REFLECTOR_PROMPT, REFLECTOR_PROMPT_NO_GT
+from ..core.failure_memory import FailureMemoryBank
 from llm import timed_llm_call
 
 
@@ -41,7 +42,8 @@ class Reflector:
         use_ground_truth: bool = True,
         use_json_mode: bool = False,
         call_id: str = "reflect",
-        log_dir: Optional[str] = None
+        log_dir: Optional[str] = None,
+        failure_memory: Optional[FailureMemoryBank] = None,
     ) -> Tuple[str, List[Dict[str, str]], Dict[str, Any]]:
         """
         Analyze the generator's output and tag bullets.
@@ -57,10 +59,20 @@ class Reflector:
             use_json_mode: Whether to use JSON mode
             call_id: Unique identifier for this call
             log_dir: Directory for logging
+            failure_memory: Optional FailureMemoryBank for analogical reflection.
+                            When provided, similar past failures are retrieved and
+                            injected into the prompt for richer analysis.
             
         Returns:
             Tuple of (reflection_content, bullet_tags, call_info)
         """
+        # Retrieve analogical failures from memory (if available)
+        if failure_memory is not None and failure_memory.size > 0:
+            similar_failures = failure_memory.retrieve(question)
+            analogical_context = FailureMemoryBank.format_for_prompt(similar_failures)
+        else:
+            analogical_context = "(No similar past failures found)"
+
         # Select the appropriate prompt
         if use_ground_truth and ground_truth:
             prompt = REFLECTOR_PROMPT.format(
@@ -69,7 +81,8 @@ class Reflector:
                 predicted_answer,
                 ground_truth,
                 environment_feedback,
-                bullets_used
+                bullets_used,
+                analogical_context,
             )
         else:
             prompt = REFLECTOR_PROMPT_NO_GT.format(
@@ -77,7 +90,8 @@ class Reflector:
                 reasoning_trace,
                 predicted_answer,
                 environment_feedback,
-                bullets_used
+                bullets_used,
+                analogical_context,
             )
         
         response, call_info = timed_llm_call(

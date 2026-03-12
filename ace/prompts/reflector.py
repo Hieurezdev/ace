@@ -14,6 +14,7 @@ REFLECTOR_PROMPT = """You are an expert analyst and educator. Your job is to dia
 - Be specific about what the model should have done differently
 - You will receive bulletpoints that are part of playbook that's used by the generator to answer the question.
 - You need to analyze these bulletpoints, and give the tag for each bulletpoint, tag can be ['helpful', 'harmful', 'neutral'] (for the generator to generate the correct answer)
+- You will also receive similar past failure cases for analogical reasoning — use these to draw parallels, identify recurring error patterns, and deepen your analysis.
 
 Your output should be a json object, which contains the following fields
   - reasoning: your chain of thought / reasoning / thinking process, detailed analysis and calculations
@@ -21,6 +22,7 @@ Your output should be a json object, which contains the following fields
   - root_cause_analysis: why did this error occur? What concept was misunderstood?
   - correct_approach: what should the model have done instead?
   - key_insight: what strategy, formula, or principle should be remembered to avoid this error?
+  - analogical_note: how does this failure compare to similar past failures? What recurring pattern, if any, is observed?
   - bullet_tags: a list of json objects with bullet_id and tag for each bulletpoint used by the generator
 
 
@@ -44,6 +46,9 @@ Your output should be a json object, which contains the following fields
 **Part of Playbook that's used by the generator to answer the question:**
 {}
 
+**Similar Past Failures (for analogical reflection):**
+{}
+
 **Answer in this exact JSON format:**
 {{
   "reasoning": "[Your chain of thought / reasoning / thinking process, detailed analysis and calculations]",
@@ -51,6 +56,7 @@ Your output should be a json object, which contains the following fields
   "root_cause_analysis": "[Why did this error occur? What concept was misunderstood?]",
   "correct_approach": "[What should the model have done instead?]",
   "key_insight": "[What strategy, formula, or principle should be remembered to avoid this error?]",
+  "analogical_note": "[How does this failure relate to similar past failures? Any recurring pattern?]",
   "bullet_tags": [
     {{"id": "calc-00001", "tag": "helpful"}},
     {{"id": "fin-00002", "tag": "harmful"}}
@@ -71,6 +77,7 @@ REFLECTOR_PROMPT_NO_GT = """You are an expert analyst and educator. Your job is 
 - Be specific about what the model should have done differently
 - You will receive bulletpoints that are part of playbook that's used by the generator to answer the question.
 - You need to analyze these bulletpoints, and give the tag for each bulletpoint, tag can be ['helpful', 'harmful', 'neutral'] (for the generator to generate the correct answer)
+- You will also receive similar past failure cases for analogical reasoning — use these to draw parallels, identify recurring error patterns, and deepen your analysis.
 
 Your output should be a json object, which contains the following fields
   - reasoning: your chain of thought / reasoning / thinking process, detailed analysis and calculations
@@ -78,6 +85,7 @@ Your output should be a json object, which contains the following fields
   - root_cause_analysis: why did this error occur? What concept was misunderstood?
   - correct_approach: what should the model have done instead?
   - key_insight: what strategy, formula, or principle should be remembered to avoid this error?
+  - analogical_note: how does this failure compare to similar past failures? What recurring pattern, if any, is observed?
   - bullet_tags: a list of json objects with bullet_id and tag for each bulletpoint used by the generator
 
 
@@ -98,6 +106,9 @@ Your output should be a json object, which contains the following fields
 **Part of Playbook that's used by the generator to answer the question:**
 {}
 
+**Similar Past Failures (for analogical reflection):**
+{}
+
 **Answer in this exact JSON format:**
 {{
   "reasoning": "[Your chain of thought / reasoning / thinking process, detailed analysis and calculations]",
@@ -105,6 +116,7 @@ Your output should be a json object, which contains the following fields
   "root_cause_analysis": "[Why did this error occur? What concept was misunderstood?]",
   "correct_approach": "[What should the model have done instead?]",
   "key_insight": "[What strategy, formula, or principle should be remembered to avoid this error?]",
+  "analogical_note": "[How does this failure relate to similar past failures? Any recurring pattern?]",
   "bullet_tags": [
     {{"id": "calc-00001", "tag": "helpful"}},
     {{"id": "fin-00002", "tag": "harmful"}}

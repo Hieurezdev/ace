@@ -81,6 +81,13 @@ def parse_args():
                              "(retrieves Top-K relevant bullets per query via BGE-M3 + FAISS)")
     parser.add_argument("--rae_top_k", type=int, default=10,
                         help="Number of Top-K bullets to retrieve per query when RAE is enabled (default: 10)")
+
+    # Failure Memory (Analogical Reflection) configuration
+    parser.add_argument("--use_failure_memory", action="store_true",
+                        help="Enable Analogical Reflection: retrieve similar past failures "
+                             "at reflection time. Shares the BGE-M3 model with RAE when both are enabled.")
+    parser.add_argument("--failure_memory_top_k", type=int, default=3,
+                        help="Number of similar past failures to retrieve per reflection step (default: 3)")
     
     # Output configuration
     parser.add_argument("--save_path", type=str, required=True,
@@ -211,7 +218,9 @@ def main():
         use_bulletpoint_analyzer=args.use_bulletpoint_analyzer,
         bulletpoint_analyzer_threshold=args.bulletpoint_analyzer_threshold,
         use_rae=args.use_rae,
-        rae_top_k=args.rae_top_k
+        rae_top_k=args.rae_top_k,
+        use_failure_memory=args.use_failure_memory,
+        failure_memory_top_k=args.failure_memory_top_k,
     )
     
     # Prepare configuration
@@ -234,6 +243,8 @@ def main():
         'bulletpoint_analyzer_threshold': args.bulletpoint_analyzer_threshold,
         'use_rae': args.use_rae,
         'rae_top_k': args.rae_top_k,
+        'use_failure_memory': args.use_failure_memory,
+        'failure_memory_top_k': args.failure_memory_top_k,
         'api_provider': args.api_provider
     }
     

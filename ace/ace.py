@@ -13,7 +13,7 @@ import json
 from datetime import datetime
 from typing import Dict, List, Tuple, Optional, Any
 
-from .core import Generator, Reflector, Curator, BulletpointAnalyzer, PlaybookRetriever
+from .core import Generator, Reflector, Curator, BulletpointAnalyzer, PlaybookRetriever, FailureMemoryBank
 from playbook_utils import *
 from logger import *
 from utils import *
@@ -42,6 +42,8 @@ class ACE:
         bulletpoint_analyzer_threshold: float = 0.90,
         use_rae: bool = False,
         rae_top_k: int = 10,
+        use_failure_memory: bool = False,
+        failure_memory_top_k: int = 3,
     ):
         """
         Initialize the ACE system.
@@ -57,6 +59,10 @@ class ACE:
             bulletpoint_analyzer_threshold: Similarity threshold for bulletpoint analyzer (0-1)
             use_rae: Enable Retrieval-Augmented Execution at the Generator (Top-K bullet retrieval)
             rae_top_k: Number of Top-K bullets to retrieve per query when RAE is enabled
+            use_failure_memory: Enable Analogical Reflection — retrieve similar past failures
+                                at reflection time to enrich the Reflector's analysis.
+                                Shares the BGE-M3 embedding model with RAE when both are enabled.
+            failure_memory_top_k: Number of similar past failures to retrieve per reflection step.
         """
         # Initialize API clients
         generator_client, reflector_client, curator_client = initialize_clients(api_provider)
@@ -113,6 +119,22 @@ class ACE:
         # (BGE-M3 is lazy-loaded here: downloaded to ~/.cache/huggingface/ if not cached)
         if self.use_rae and self.playbook_retriever:
             self.playbook_retriever.update_index(self.playbook)
+
+        # Initialize FailureMemoryBank (Analogical Reflection)
+        # Shares the BGE-M3 encoder with PlaybookRetriever when RAE is enabled
+        # so only one copy of the model is loaded.
+        self.use_failure_memory = use_failure_memory
+        self.failure_memory_top_k = failure_memory_top_k
+        if use_failure_memory:
+            shared_encoder = self.playbook_retriever.encode if self.use_rae and self.playbook_retriever else None
+            self.failure_memory = FailureMemoryBank(
+                encoder=shared_encoder,
+                top_k=failure_memory_top_k,
+            )
+            src = "shared BGE-M3 from RAE" if shared_encoder is not None else "standalone BGE-M3"
+            print(f"✓ FailureMemoryBank initialized (top_k={failure_memory_top_k}, encoder={src})")
+        else:
+            self.failure_memory = None
     
     def _initialize_empty_playbook(self) -> str:
         """Initialize an empty playbook with standard sections."""
@@ -156,6 +178,8 @@ class ACE:
             'bulletpoint_analyzer_threshold': config.get('bulletpoint_analyzer_threshold', 0.90),
             'use_rae': config.get('use_rae', False),
             'rae_top_k': config.get('rae_top_k', 10),
+            'use_failure_memory': config.get('use_failure_memory', False),
+            'failure_memory_top_k': config.get('failure_memory_top_k', 3),
         }
     
     def _setup_paths(self, save_dir: str, task_name: str, mode: str) -> Tuple[str, str]:
@@ -524,6 +548,9 @@ class ACE:
         # STEP 2: Reflection and regeneration
         if not is_correct:
             # For incorrect answers - iterate reflection rounds
+            # Store failure in memory BEFORE reflection so later rounds in the
+            # same episode can already benefit from the bank (future episodes
+            # will have distilled insights from the completed reflection below).
             for round_num in range(max_num_rounds):
                 print(f"Reflection round {round_num + 1}/{max_num_rounds}")
                 
@@ -532,7 +559,7 @@ class ACE:
                     self.playbook, bullet_ids
                 )
                 
-                # Reflect on error
+                # Reflect on error (with analogical context if available)
                 reflection_content, bullet_tags, _ = self.reflector.reflect(
                     question=question,
                     reasoning_trace=gen_response,
@@ -543,7 +570,8 @@ class ACE:
                     use_ground_truth=not no_ground_truth,
                     use_json_mode=use_json_mode,
                     call_id=f"{step_id}_round_{round_num}",
-                    log_dir=log_dir
+                    log_dir=log_dir,
+                    failure_memory=self.failure_memory,
                 )
                 
                 # Update bullet counts
@@ -570,7 +598,22 @@ class ACE:
                     print(f"Corrected after reflection round {round_num + 1}!")
                     is_correct = True
                     break
-        
+
+            # Store distilled insights from the last reflection into memory
+            if self.failure_memory is not None and reflection_content not in ("(empty)", ""):
+                try:
+                    parsed = json.loads(reflection_content) if isinstance(reflection_content, str) else {}
+                except (json.JSONDecodeError, TypeError):
+                    parsed = {}
+                self.failure_memory.add(
+                    question=question,
+                    predicted_answer=pre_train_answer,
+                    ground_truth=target,
+                    error_identification=parsed.get("error_identification", ""),
+                    root_cause=parsed.get("root_cause_analysis", ""),
+                    key_insight=parsed.get("key_insight", ""),
+                )
+
         else:
             # For correct answers - still run reflector to tag helpful bullets
             playbook_bullets = extract_playbook_bullets(
@@ -587,7 +630,8 @@ class ACE:
                 use_ground_truth=not no_ground_truth,
                 use_json_mode=use_json_mode,
                 call_id=f"{step_id}_reflect_on_correct",
-                log_dir=log_dir
+                log_dir=log_dir,
+                failure_memory=None,  # no memory lookup for correct answers
             )
             
             # Update bullet counts

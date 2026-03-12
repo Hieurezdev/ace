@@ -124,6 +124,19 @@ class PlaybookRetriever:
         ).astype(np.float32)
         return embeddings
 
+    def encode(self, texts: List[str]) -> np.ndarray:
+        """
+        Public encode method — allows other components (e.g. FailureMemoryBank)
+        to share this retriever's embedding model without loading a second copy.
+        """
+        return self._encode(texts)
+
+    @property
+    def embedding_model(self):
+        """The underlying SentenceTransformer instance (lazily loaded)."""
+        self._load_model()
+        return self._embedding_model
+
     def _parse_playbook(self, playbook: str) -> Tuple[List[str], List[Dict[str, Any]]]:
         """
         Parse playbook into section header lines and bullet dicts.

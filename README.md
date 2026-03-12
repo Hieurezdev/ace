@@ -106,7 +106,11 @@ ace_system = ACE(
     generator_model="DeepSeek-V3.1",
     reflector_model="DeepSeek-V3.1",
     curator_model="DeepSeek-V3.1",
-    max_tokens=4096
+    max_tokens=4096,
+    use_rae=True,            # RAE: retrieve top-K bullets per query (BGE-M3 + FAISS)
+    rae_top_k=10,
+    use_failure_memory=True, # Analogical Reflection: retrieve similar past failures
+    failure_memory_top_k=3,  # shares BGE-M3 with RAE — no extra model load
 )
 
 # Prepare configuration
@@ -124,8 +128,13 @@ config = {
     'save_dir': './results',
     'test_workers': 20,
     'use_bulletpoint_analyzer': false,
-    'api_provider': api_provider
-
+    'api_provider': api_provider,
+    # RAE
+    'use_rae': True,
+    'rae_top_k': 10,
+    # Analogical Reflection
+    'use_failure_memory': True,
+    'failure_memory_top_k': 3,
 }
 
 # Offline adaptation
@@ -189,6 +198,33 @@ uv run python -m eval.finance.run \
     --num_epochs 3 \
     --eval_steps 100 \
     --max_tokens 4096
+
+# Enable RAE (Retrieval-Augmented Execution): retrieve Top-K relevant playbook
+# bullets per query using BGE-M3 + FAISS instead of passing the full playbook
+uv run python -m eval.finance.run \
+    --task_name finer \
+    --mode offline \
+    --save_path results \
+    --use_rae \
+    --rae_top_k 10
+
+# Enable Analogical Reflection: retrieve similar past failures at reflection
+# time so the Reflector can reason by analogy with previously seen mistakes
+uv run python -m eval.finance.run \
+    --task_name finer \
+    --mode offline \
+    --save_path results \
+    --use_failure_memory \
+    --failure_memory_top_k 3
+
+# RAE + Analogical Reflection combined — both share a single BGE-M3 model,
+# so no extra memory overhead for loading a second embedding model
+uv run python -m eval.finance.run \
+    --task_name finer \
+    --mode offline \
+    --save_path results \
+    --use_rae --rae_top_k 10 \
+    --use_failure_memory --failure_memory_top_k 3
 ```
 
 #### Available Arguments
@@ -218,6 +254,10 @@ uv run python -m eval.finance.run \
 | `--no_ground_truth` | Don't use ground truth in reflection | False |
 | `--use_bulletpoint_analyzer` | Enable bulletpoint analyzer for playbook deduplication and merging | False |
 | `--bulletpoint_analyzer_threshold` | Similarity threshold for bulletpoint analyzer (0-1) | 0.9 |
+| `--use_rae` | Enable Retrieval-Augmented Execution: retrieve Top-K relevant bullets per query (BGE-M3 + FAISS) instead of passing the full playbook to the Generator | False |
+| `--rae_top_k` | Number of Top-K bullets to retrieve per query when RAE is enabled | 10 |
+| `--use_failure_memory` | Enable Analogical Reflection: retrieve similar past failures at reflection time so the Reflector can reason by analogy. Shares the BGE-M3 model with RAE when both are enabled — no extra memory cost | False |
+| `--failure_memory_top_k` | Number of similar past failures to retrieve per reflection step | 3 |
 
 </details>
 
