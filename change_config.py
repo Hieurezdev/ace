@@ -44,5 +44,6 @@ def update_qwen_config(model_path, target_context=163840):
 if __name__ == "__main__":
     # Thay đổi đường dẫn đến thư mục chứa model của bạn
     # Dựa vào script trước của bạn, thư mục là 'ace/'
-    # target_context=131072 (128K) với orig_max=32768 -> factor=4.0 theo khuyến nghị Qwen2 chính thức
-    update_qwen_config(model_path="ace/", target_context=131072)
+    # model được tải xuống ./model/ bởi install_model.py
+    # target_context=163840 -> factor=ceil(163840/32768*10)/10 = 5.0
+    update_qwen_config(model_path="./model", target_context=163840)
