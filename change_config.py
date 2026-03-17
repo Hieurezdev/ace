@@ -1,0 +1,48 @@
+import json
+import os
+import math
+
+def update_qwen_config(model_path, target_context=163840):
+    config_file = os.path.join(model_path, "config.json")
+    
+    if not os.path.exists(config_file):
+        print(f"❌ Không tìm thấy file tại: {config_file}")
+        return
+
+    # 1. Đọc dữ liệu hiện tại
+    with open(config_file, 'r', encoding='utf-8') as f:
+        config = json.load(f)
+
+    # 2. Lấy thông số gốc
+    # Qwen2 mặc định thường là 32768
+    orig_max = config.get("original_max_position_embeddings", 32768)
+    
+    # 3. Tính toán factor
+    # Công thức: factor = target / original
+    raw_factor = target_context / orig_max
+    # Làm tròn lên 1 chữ số thập phân để an toàn (ví dụ 4.58 -> 4.6 hoặc 5.0)
+    factor = math.ceil(raw_factor * 10) / 10 
+    
+    print(f"🔄 Đang cấu hình: {orig_max} -> {target_context} (Factor: {factor})")
+
+    # 4. Cập nhật hoặc thêm mới rope_scaling
+    config["rope_scaling"] = {
+        "factor": factor,
+        "original_max_position_embeddings": orig_max,
+        "type": "yarn"
+    }
+    
+    # Đảm bảo max_position_embeddings cũng được cập nhật để vLLM nhận diện đúng
+    config["max_position_embeddings"] = target_context
+
+    # 5. Lưu lại file
+    with open(config_file, 'w', encoding='utf-8') as f:
+        json.dump(config, f, indent=2, ensure_ascii=False)
+    
+    print(f"✅ Đã cập nhật xong file: {config_file}")
+
+if __name__ == "__main__":
+    # Thay đổi đường dẫn đến thư mục chứa model của bạn
+    # Dựa vào script trước của bạn, thư mục là 'ace/'
+    # target_context=131072 (128K) với orig_max=32768 -> factor=4.0 theo khuyến nghị Qwen2 chính thức
+    update_qwen_config(model_path="ace/", target_context=131072)
