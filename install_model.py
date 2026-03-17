@@ -1,18 +1,60 @@
-from transformers import AutoModelForCausalLM, AutoTokenizer
+import argparse
 import os
+import shutil
+from huggingface_hub import snapshot_download
 
-MODEL_ID = "Qwen/Qwen2-7B-Instruct"
-SAVE_DIR = "./model"
 
-print(f"Downloading {MODEL_ID} to {SAVE_DIR} ...")
+def check_free_space(path: str, min_gb: int) -> None:
+    os.makedirs(path, exist_ok=True)
+    free_bytes = shutil.disk_usage(path).free
+    free_gb = free_bytes / (1024 ** 3)
+    if free_gb < min_gb:
+        raise RuntimeError(
+            f"Not enough disk space at '{path}'. Free: {free_gb:.2f} GB, required: >= {min_gb} GB."
+        )
 
-tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
-tokenizer.save_pretrained(SAVE_DIR)
 
-model = AutoModelForCausalLM.from_pretrained(
-    MODEL_ID,
-    torch_dtype="auto",
-)
-model.save_pretrained(SAVE_DIR)
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model-id", default="Qwen/Qwen2-7B-Instruct")
+    parser.add_argument("--save-dir", default=os.environ.get("MODEL_DIR", "./model"))
+    parser.add_argument("--cache-dir", default=os.environ.get("HF_HOME", "./.hf_cache"))
+    parser.add_argument("--min-free-gb", type=int, default=20)
+    args = parser.parse_args()
 
-print(f"Done! Model saved to {os.path.abspath(SAVE_DIR)}")
+    save_dir = os.path.abspath(args.save_dir)
+    cache_dir = os.path.abspath(args.cache_dir)
+
+    check_free_space(os.path.dirname(save_dir) or ".", args.min_free_gb)
+    check_free_space(cache_dir, 2)
+
+    os.makedirs(save_dir, exist_ok=True)
+    os.makedirs(cache_dir, exist_ok=True)
+
+    print(f"Downloading {args.model_id} -> {save_dir}")
+    print(f"Using cache dir: {cache_dir}")
+
+    snapshot_download(
+        repo_id=args.model_id,
+        local_dir=save_dir,
+        cache_dir=cache_dir,
+        allow_patterns=[
+            "*.json",
+            "*.safetensors",
+            "tokenizer*",
+            "vocab*",
+            "merges.txt",
+            "*.model",
+            "*.tiktoken",
+        ],
+    )
+
+    config_path = os.path.join(save_dir, "config.json")
+    if not os.path.exists(config_path):
+        raise RuntimeError(f"Download finished but missing config file: {config_path}")
+
+    print(f"Done! Model files are in: {save_dir}")
+
+
+if __name__ == "__main__":
+    main()

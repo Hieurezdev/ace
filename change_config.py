@@ -1,6 +1,7 @@
 import json
 import os
 import math
+import argparse
 
 def update_qwen_config(model_path, target_context=163840):
     config_file = os.path.join(model_path, "config.json")
@@ -42,8 +43,9 @@ def update_qwen_config(model_path, target_context=163840):
     print(f"✅ Đã cập nhật xong file: {config_file}")
 
 if __name__ == "__main__":
-    # Thay đổi đường dẫn đến thư mục chứa model của bạn
-    # Dựa vào script trước của bạn, thư mục là 'ace/'
-    # model được tải xuống ./model/ bởi install_model.py
-    # target_context=163840 -> factor=ceil(163840/32768*10)/10 = 5.0
-    update_qwen_config(model_path="./model", target_context=163840)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model-path", default="./model")
+    parser.add_argument("--target-context", type=int, default=163840)
+    args = parser.parse_args()
+
+    update_qwen_config(model_path=args.model_path, target_context=args.target_context)
