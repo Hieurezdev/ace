@@ -4,15 +4,6 @@ import shutil
 from huggingface_hub import snapshot_download
 
 
-def check_free_space(path: str, min_gb: int) -> None:
-    os.makedirs(path, exist_ok=True)
-    free_bytes = shutil.disk_usage(path).free
-    free_gb = free_bytes / (1024 ** 3)
-    if free_gb < min_gb:
-        raise RuntimeError(
-            f"Not enough disk space at '{path}'. Free: {free_gb:.2f} GB, required: >= {min_gb} GB."
-        )
-
 
 def default_model_dir() -> str:
     if os.path.isdir("/kaggle/temp"):
@@ -37,9 +28,7 @@ def main() -> None:
     save_dir = os.path.abspath(args.save_dir)
     cache_dir = os.path.abspath(args.cache_dir)
 
-    check_free_space(os.path.dirname(save_dir) or ".", args.min_free_gb)
-    check_free_space(cache_dir, max(2, args.min_free_gb // 5))
-
+    
     os.makedirs(save_dir, exist_ok=True)
     os.makedirs(cache_dir, exist_ok=True)
 
