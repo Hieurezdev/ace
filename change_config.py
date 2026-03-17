@@ -15,8 +15,13 @@ def update_qwen_config(model_path, target_context=163840):
         config = json.load(f)
 
     # 2. Lấy thông số gốc
-    # Qwen2 mặc định thường là 32768
-    orig_max = config.get("original_max_position_embeddings", 32768)
+    # Ưu tiên đọc từ bên trong rope_scaling nếu đã có, rồi mới đọc top-level
+    existing_rope = config.get("rope_scaling", {})
+    orig_max = (
+        existing_rope.get("original_max_position_embeddings")
+        or config.get("original_max_position_embeddings")
+        or config.get("max_position_embeddings", 32768)
+    )
     
     # 3. Tính toán factor
     # Công thức: factor = target / original
@@ -27,10 +32,12 @@ def update_qwen_config(model_path, target_context=163840):
     print(f"🔄 Đang cấu hình: {orig_max} -> {target_context} (Factor: {factor})")
 
     # 4. Cập nhật hoặc thêm mới rope_scaling
+    # Dùng "rope_type" (transformers >= 4.40) VÀ "type" để tương thích ngược
     config["rope_scaling"] = {
+        "rope_type": "yarn",
+        "type": "yarn",
         "factor": factor,
         "original_max_position_embeddings": orig_max,
-        "type": "yarn"
     }
     
     # Đảm bảo max_position_embeddings cũng được cập nhật để vLLM nhận diện đúng
