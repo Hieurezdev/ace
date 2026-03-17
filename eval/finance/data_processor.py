@@ -94,7 +94,7 @@ class DataProcessor:
             Processed data in standard format
         """
         processed_data = []
-        if self.task_name == "finer":
+        if self.task_name in ("finer", "finer_0.5"):
             parse_fn = parse_instruction_and_input
         elif self.task_name == "formula":
             parse_fn = parse_context_and_question_formula
@@ -173,7 +173,7 @@ class DataProcessor:
         Returns:
             bool: True if answer is correct, False otherwise
         """
-        if self.task_name == "finer":
+        if self.task_name in ("finer", "finer_0.5"):
             return self._finer_answer_is_correct(predicted, ground_truth)
         elif self.task_name == "formula":
             return self._formula_answer_is_correct(predicted, ground_truth)
@@ -231,7 +231,7 @@ class DataProcessor:
         Returns:
             tuple: (accuracy, response_list)
         """
-        if self.task_name == "finer":
+        if self.task_name in ("finer", "finer_0.5"):
             return self._evaluate_finer_accuracy(out, target)
         elif self.task_name == "formula":
             return self._evaluate_formula_accuracy(out, target)
