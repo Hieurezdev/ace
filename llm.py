@@ -8,12 +8,15 @@ This file contains the LLM class for the project.
 """
 import time
 import random
+import os
+import json
+from urllib import request, error
 from datetime import datetime
 import openai
 from logger import log_llm_call, log_problematic_request
 
 def timed_llm_call(client, api_provider, model, prompt, role, call_id, max_tokens=4096, log_dir=None,
-                   sleep_seconds=15, retries_on_timeout=1000, attempt=1, use_json_mode=False):
+                   sleep_seconds=None, retries_on_timeout=None, attempt=1, use_json_mode=False):
     """
     Make a timed LLM call with error handling and retry logic.
     
@@ -47,6 +50,10 @@ def timed_llm_call(client, api_provider, model, prompt, role, call_id, max_token
     """
     start_time = time.time()
     prompt_time = time.time()
+    if sleep_seconds is None:
+        sleep_seconds = float(os.getenv("LLM_RETRY_SLEEP_SECONDS", "3"))
+    if retries_on_timeout is None:
+        retries_on_timeout = int(os.getenv("LLM_RETRIES_ON_TIMEOUT", "8"))
     
     print(f"[{role.upper()}] Starting call {call_id}...")
     
@@ -57,6 +64,63 @@ def timed_llm_call(client, api_provider, model, prompt, role, call_id, max_token
         try:
             # Get client
             active_client = client
+
+            if api_provider == "sglang":
+                base_url = active_client.get("base_url") if isinstance(active_client, dict) else os.getenv('SGLANG_BASE_URL', 'http://127.0.0.1:62726')
+                endpoint = f"{base_url.rstrip('/')}/generate"
+                payload = {
+                    "text": prompt,
+                    "sampling_params": {
+                        "temperature": 0.0,
+                        "max_new_tokens": max_tokens,
+                    },
+                }
+                call_start = time.time()
+                req = request.Request(
+                    endpoint,
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                timeout_seconds = float(os.getenv("LLM_REQUEST_TIMEOUT_SECONDS", "180"))
+                with request.urlopen(req, timeout=timeout_seconds) as resp:
+                    raw = resp.read().decode("utf-8")
+                call_end = time.time()
+
+                response_json = json.loads(raw)
+                if isinstance(response_json, dict):
+                    if isinstance(response_json.get("text"), list) and response_json.get("text"):
+                        response_content = response_json["text"][0]
+                    else:
+                        response_content = response_json.get("text") or response_json.get("generated_text")
+                else:
+                    response_content = None
+
+                if response_content is None:
+                    raise Exception("Empty response from API")
+
+                response_time = time.time()
+                total_time = response_time - start_time
+                call_info = {
+                    "role": role,
+                    "call_id": call_id,
+                    "model": model,
+                    "prompt": prompt,
+                    "response": response_content,
+                    "prompt_time": prompt_time - start_time,
+                    "response_time": response_time - prompt_time,
+                    "total_time": total_time,
+                    "call_time": call_end - call_start,
+                    "prompt_length": len(prompt),
+                    "response_length": len(response_content),
+                    "prompt_num_tokens": None,
+                    "response_num_tokens": None,
+                }
+
+                print(f"[{role.upper()}] Call {call_id} completed in {total_time:.2f}s")
+                if log_dir:
+                    log_llm_call(log_dir, call_info)
+                return response_content, call_info
 
             # Prepare API call parameters
             if api_provider == "openai":
@@ -142,6 +206,9 @@ def timed_llm_call(client, api_provider, model, prompt, role, call_id, max_token
             if hasattr(openai, 'InternalServerError') and isinstance(e, openai.InternalServerError):
                 is_server_error = True
                 print(f"[{role.upper()}] OpenAI InternalServerError detected")
+
+            if isinstance(e, error.URLError):
+                is_timeout = True
             
             # Debug empty response issues
             if is_empty_response:

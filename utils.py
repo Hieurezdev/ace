@@ -35,12 +35,22 @@ def initialize_clients(api_provider):
         # Use local vLLM server (OpenAI-compatible)
         base_url = os.getenv('VLLM_BASE_URL', 'http://localhost:8000/v1')
         api_key = os.getenv('VLLM_API_KEY', 'EMPTY')
+    elif api_provider == "sglang":
+        # Use local SGLang server (native /generate endpoint)
+        base_url = os.getenv('SGLANG_BASE_URL', 'http://127.0.0.1:62726')
+        generator_client = {"base_url": base_url}
+        reflector_client = {"base_url": base_url}
+        curator_client = {"base_url": base_url}
+        print(f"Using {api_provider} API for all models")
+        return generator_client, reflector_client, curator_client
     else:
-        raise ValueError((f"Invalid api_provider name: {api_provider}. Must be 'sambanova', 'together', 'openai', or 'vllm'"))
+        raise ValueError((f"Invalid api_provider name: {api_provider}. Must be 'sambanova', 'together', 'openai', 'vllm', or 'sglang'"))
+
+    request_timeout = float(os.getenv('LLM_REQUEST_TIMEOUT_SECONDS', '180'))
         
-    generator_client = openai.OpenAI(api_key=api_key, base_url=base_url)
-    reflector_client = openai.OpenAI(api_key=api_key, base_url=base_url)
-    curator_client = openai.OpenAI(api_key=api_key, base_url=base_url)
+    generator_client = openai.OpenAI(api_key=api_key, base_url=base_url, timeout=request_timeout)
+    reflector_client = openai.OpenAI(api_key=api_key, base_url=base_url, timeout=request_timeout)
+    curator_client = openai.OpenAI(api_key=api_key, base_url=base_url, timeout=request_timeout)
     
     print(f"Using {api_provider} API for all models")
     return generator_client, reflector_client, curator_client
