@@ -71,6 +71,7 @@ uv run python -m eval.finance.run \
     --playbook_token_budget 4000 \
     --max_tokens 2048 \
     --test_workers 1 \
+    --seed 42 \
     --eval_steps 50 \
     --save_steps 25
 

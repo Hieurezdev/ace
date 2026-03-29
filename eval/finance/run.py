@@ -11,7 +11,7 @@ from datetime import datetime
 from .data_processor import DataProcessor
 
 from ace import ACE
-from utils import initialize_clients
+from utils import initialize_clients, set_global_seed
 
 def parse_args():
     """Parse command line arguments."""
@@ -92,6 +92,8 @@ def parse_args():
     # Output configuration
     parser.add_argument("--save_path", type=str, required=True,
                         help="Directory to save results")
+    parser.add_argument("--seed", type=int, default=42,
+                        help="Random seed for reproducibility")
     
     return parser.parse_args()
 
@@ -181,6 +183,9 @@ def load_initial_playbook(path):
 def main():
     """Main execution function."""
     args = parse_args()
+
+    set_global_seed(args.seed)
+    print(f"Using seed: {args.seed}")
     
     print(f"\n{'='*60}")
     print(f"ACE SYSTEM")
@@ -245,7 +250,8 @@ def main():
         'rae_top_k': args.rae_top_k,
         'use_failure_memory': args.use_failure_memory,
         'failure_memory_top_k': args.failure_memory_top_k,
-        'api_provider': args.api_provider
+        'api_provider': args.api_provider,
+        'seed': args.seed,
     }
     
     # Execute using the unified run method

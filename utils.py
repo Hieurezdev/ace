@@ -2,14 +2,32 @@
 import os
 import re
 import json
+import random
 import openai
 import tiktoken
+import numpy as np
 from dotenv import load_dotenv
 from typing import List, Dict, Any, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Load environment variables from .env file
 load_dotenv()
+
+
+def set_global_seed(seed: int) -> None:
+    """Set global random seed across common libraries for reproducibility."""
+    random.seed(seed)
+    np.random.seed(seed)
+
+    # Best-effort torch seeding (optional dependency)
+    try:
+        import torch
+
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
+    except Exception:
+        pass
 
 def initialize_clients(api_provider):
     """Initialize separate clients for generator, reflector, and curator"""

@@ -4,6 +4,7 @@ import argparse
 from .data_processor import DataProcessor, load_data
 
 from ace import ACE
+from utils import set_global_seed
 
 
 def parse_args():
@@ -75,6 +76,8 @@ def parse_args():
     # Output configuration
     parser.add_argument("--save_path", type=str, required=True,
                         help="Directory to save results")
+    parser.add_argument("--seed", type=int, default=42,
+                        help="Random seed for reproducibility")
 
     return parser.parse_args()
 
@@ -140,6 +143,9 @@ def main():
     """Main execution function."""
     args = parse_args()
 
+    set_global_seed(args.seed)
+    print(f"Using seed: {args.seed}")
+
     print(f"\n{'='*60}")
     print(f"ACE SYSTEM - Mind2Web")
     print(f"{'='*60}")
@@ -199,7 +205,8 @@ def main():
         'initial_playbook_path': args.initial_playbook_path,
         'use_bulletpoint_analyzer': args.use_bulletpoint_analyzer,
         'bulletpoint_analyzer_threshold': args.bulletpoint_analyzer_threshold,
-        'api_provider': args.api_provider
+        'api_provider': args.api_provider,
+        'seed': args.seed,
     }
 
     # If skip_initial_test, don't pass test_samples during offline training

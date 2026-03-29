@@ -247,6 +247,7 @@ uv run python -m eval.finance.run \
 | `--max_tokens` | Maximum tokens for LLM responses | 4096 |
 | `--playbook_token_budget` | Total token budget for playbook | 80000 |
 | `--test_workers` | Number of parallel workers for testing | 20 |
+| `--seed` | Random seed for reproducibility | 42 |
 | `--generator_model` | Model for generator | `DeepSeek-V3.1` |
 | `--reflector_model` | Model for reflector | `DeepSeek-V3.1` |
 | `--curator_model` | Model for curator | `DeepSeek-V3.1` |
