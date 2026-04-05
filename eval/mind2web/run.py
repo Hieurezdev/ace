@@ -69,6 +69,14 @@ def parse_args():
     parser.add_argument("--bulletpoint_analyzer_threshold", type=float, default=0.90,
                         help="Similarity threshold for bulletpoint analyzer (0-1, default: 0.90)")
 
+    # Adversarial agent configuration
+    parser.add_argument("--use_adversarial", action="store_true",
+                        help="Enable adversarial agent for active playbook stress testing")
+    parser.add_argument("--adversarial_frequency", type=int, default=10,
+                        help="Run adversarial episode every N steps (default: 10)")
+    parser.add_argument("--adversarial_model", type=str, default=None,
+                        help="Model for adversarial agent (defaults to generator model)")
+
     # Skip initial test evaluation (useful when you already have baseline results)
     parser.add_argument("--skip_initial_test", action="store_true",
                         help="Skip initial test evaluation in offline mode to save time")
@@ -181,10 +189,13 @@ def main():
         generator_model=args.generator_model,
         reflector_model=args.reflector_model,
         curator_model=args.curator_model,
+        adversarial_model=args.adversarial_model,
         max_tokens=args.max_tokens,
         initial_playbook=initial_playbook,
         use_bulletpoint_analyzer=args.use_bulletpoint_analyzer,
-        bulletpoint_analyzer_threshold=args.bulletpoint_analyzer_threshold
+        bulletpoint_analyzer_threshold=args.bulletpoint_analyzer_threshold,
+        use_adversarial=args.use_adversarial,
+        adversarial_frequency=args.adversarial_frequency,
     )
 
     # Prepare configuration
@@ -207,6 +218,8 @@ def main():
         'bulletpoint_analyzer_threshold': args.bulletpoint_analyzer_threshold,
         'api_provider': args.api_provider,
         'seed': args.seed,
+        'use_adversarial': args.use_adversarial,
+        'adversarial_frequency': args.adversarial_frequency,
     }
 
     # If skip_initial_test, don't pass test_samples during offline training

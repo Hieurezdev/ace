@@ -6,6 +6,7 @@ Contains all prompts for Generator, Reflector, and Curator agents.
 from .generator import *
 from .reflector import *
 from .curator import *
+from .adversarial import *
 
 __all__ = [
     # Generator prompts
@@ -18,4 +19,7 @@ __all__ = [
     # Curator prompts
     'CURATOR_PROMPT',
     'CURATOR_PROMPT_NO_GT',
+
+    # Adversarial prompts
+    'ADVERSARIAL_PROMPT',
 ]

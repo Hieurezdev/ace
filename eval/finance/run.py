@@ -89,6 +89,14 @@ def parse_args():
     parser.add_argument("--failure_memory_top_k", type=int, default=3,
                         help="Number of similar past failures to retrieve per reflection step (default: 3)")
     
+    # Adversarial agent configuration
+    parser.add_argument("--use_adversarial", action="store_true",
+                        help="Enable adversarial agent for active playbook stress testing")
+    parser.add_argument("--adversarial_frequency", type=int, default=10,
+                        help="Run adversarial episode every N steps (default: 10)")
+    parser.add_argument("--adversarial_model", type=str, default=None,
+                        help="Model for adversarial agent (defaults to generator model)")
+    
     # Output configuration
     parser.add_argument("--save_path", type=str, required=True,
                         help="Directory to save results")
@@ -226,6 +234,9 @@ def main():
         rae_top_k=args.rae_top_k,
         use_failure_memory=args.use_failure_memory,
         failure_memory_top_k=args.failure_memory_top_k,
+        adversarial_model=args.adversarial_model,
+        use_adversarial=args.use_adversarial,
+        adversarial_frequency=args.adversarial_frequency,
     )
     
     # Prepare configuration
@@ -251,6 +262,8 @@ def main():
         'use_failure_memory': args.use_failure_memory,
         'failure_memory_top_k': args.failure_memory_top_k,
         'api_provider': args.api_provider,
+        'use_adversarial': args.use_adversarial,
+        'adversarial_frequency': args.adversarial_frequency,
         'seed': args.seed,
     }
     

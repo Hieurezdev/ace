@@ -14,6 +14,7 @@ from datetime import datetime
 from typing import Dict, List, Tuple, Optional, Any
 
 from .core import Generator, Reflector, Curator, BulletpointAnalyzer, PlaybookRetriever, FailureMemoryBank
+from .core import AdversarialAgent
 from playbook_utils import *
 from logger import *
 from utils import *
@@ -44,6 +45,9 @@ class ACE:
         rae_top_k: int = 10,
         use_failure_memory: bool = False,
         failure_memory_top_k: int = 3,
+        use_adversarial: bool = False,
+        adversarial_frequency: int = 10,
+        adversarial_model: Optional[str] = None,
     ):
         """
         Initialize the ACE system.
@@ -63,6 +67,9 @@ class ACE:
                                 at reflection time to enrich the Reflector's analysis.
                                 Shares the BGE-M3 embedding model with RAE when both are enabled.
             failure_memory_top_k: Number of similar past failures to retrieve per reflection step.
+            use_adversarial: Enable adversarial agent for active playbook stress testing.
+            adversarial_frequency: Run adversarial episode every N steps (only in train modes).
+            adversarial_model: Model name for adversarial agent (defaults to generator model).
         """
         # Initialize API clients
         generator_client, reflector_client, curator_client = initialize_clients(api_provider)
@@ -104,6 +111,13 @@ class ACE:
         self.reflector_client = reflector_client
         self.curator_client = curator_client
         self.max_tokens = max_tokens
+        
+        self.use_adversarial = use_adversarial
+        self.adversarial_frequency = adversarial_frequency
+        adversarial_model_name = adversarial_model or generator_model
+        self.adversarial_agent = AdversarialAgent(
+            generator_client, api_provider, adversarial_model_name, max_tokens
+        )
         
         # Initialize playbook
         if initial_playbook:
@@ -180,6 +194,8 @@ class ACE:
             'rae_top_k': config.get('rae_top_k', 10),
             'use_failure_memory': config.get('use_failure_memory', False),
             'failure_memory_top_k': config.get('failure_memory_top_k', 3),
+            'use_adversarial': config.get('use_adversarial', False),
+            'adversarial_frequency': config.get('adversarial_frequency', 10),
         }
     
     def _setup_paths(self, save_dir: str, task_name: str, mode: str) -> Tuple[str, str]:
@@ -269,6 +285,7 @@ class ACE:
                 "generator_model": self.generator.model,
                 "reflector_model": self.reflector.model,
                 "curator_model": self.curator.model,
+                "adversarial_model": self.adversarial_agent.model if self.adversarial_agent else None,
                 "config": config,
             }, f, indent=2)
         
@@ -467,6 +484,173 @@ class ACE:
             }, f, indent=2)
         
         return test_results
+
+    def _run_adversarial_episode(
+        self,
+        step_id: str,
+        epoch: int,
+        step: int,
+        usage_log_path: str,
+        log_dir: str,
+        config_params: Dict[str, Any],
+        total_samples: int,
+        base_question: str,
+        base_context: str,
+        base_target: str,
+        data_processor,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Run a single adversarial episode and update playbook if needed.
+        """
+        if not self.use_adversarial or not self.adversarial_agent:
+            return None
+
+        adversarial_frequency = config_params['adversarial_frequency']
+        if adversarial_frequency <= 0 or step % adversarial_frequency != 0:
+            return None
+
+        print("\n--- Running Adversarial Agent ---")
+
+        use_json_mode = config_params['use_json_mode']
+        no_ground_truth = config_params['no_ground_truth']
+        token_budget = config_params['token_budget']
+        task_name = config_params['task_name']
+
+        attack, _ = self.adversarial_agent.generate_attack(
+            playbook=self.playbook,
+            task_name=task_name,
+            recent_question=base_question,
+            recent_context=base_context,
+            recent_target=base_target,
+            use_json_mode=use_json_mode,
+            call_id=f"{step_id}_adv_generate",
+            log_dir=log_dir,
+        )
+
+        if not attack:
+            return None
+
+        adv_question = attack.get("question", "")
+        adv_context = attack.get("context", "")
+        adv_target = attack.get("target", "")
+        attack_rationale = attack.get("attack_rationale", "")
+        vulnerability_hint = attack.get("vulnerability_hint", "")
+
+        adv_response, adv_bullet_ids, _ = self.generator.generate(
+            question=adv_question,
+            playbook=self.playbook,
+            context=adv_context,
+            reflection="(empty)",
+            use_json_mode=use_json_mode,
+            call_id=f"{step_id}_adv_exec",
+            log_dir=log_dir,
+            retriever=self.playbook_retriever,
+        )
+
+        adv_answer = extract_answer(adv_response)
+        adv_correct = data_processor.answer_is_correct(adv_answer, adv_target)
+        reflection_content = "(empty)"
+
+        if not adv_correct:
+            playbook_bullets = extract_playbook_bullets(
+                self.playbook, adv_bullet_ids
+            )
+            environment_feedback = "Adversarial test: predicted answer does not match adversarial target."
+            if attack_rationale:
+                environment_feedback += f" Intended trap: {attack_rationale}"
+            if vulnerability_hint:
+                environment_feedback += f" Vulnerability hint: {vulnerability_hint}"
+
+            reflection_content, bullet_tags, _ = self.reflector.reflect(
+                question=adv_question,
+                reasoning_trace=adv_response,
+                predicted_answer=adv_answer,
+                ground_truth=adv_target if not no_ground_truth else None,
+                environment_feedback=environment_feedback,
+                bullets_used=playbook_bullets,
+                use_ground_truth=not no_ground_truth,
+                use_json_mode=use_json_mode,
+                call_id=f"{step_id}_adv_reflect",
+                log_dir=log_dir,
+                failure_memory=self.failure_memory,
+            )
+
+            if bullet_tags:
+                self.playbook = update_bullet_counts(
+                    self.playbook, bullet_tags
+                )
+
+            if self.failure_memory is not None and reflection_content not in ("(empty)", ""):
+                try:
+                    parsed = json.loads(reflection_content) if isinstance(reflection_content, str) else {}
+                except (json.JSONDecodeError, TypeError):
+                    parsed = {}
+                self.failure_memory.add(
+                    question=adv_question,
+                    predicted_answer=adv_answer,
+                    ground_truth=adv_target,
+                    error_identification=parsed.get("error_identification", ""),
+                    root_cause=parsed.get("root_cause_analysis", ""),
+                    key_insight=parsed.get("key_insight", ""),
+                )
+
+            print("--- Running Curator for Adversarial Report ---")
+            stats = get_playbook_stats(self.playbook)
+            question_context = (
+                f"Adversarial question: {adv_question}\n"
+                f"Context: {adv_context}\n"
+                f"Attack rationale: {attack_rationale}\n"
+                f"Vulnerability hint: {vulnerability_hint}"
+            )
+            self.playbook, self.next_global_id, _, _ = self.curator.curate(
+                current_playbook=self.playbook,
+                recent_reflection=reflection_content,
+                question_context=question_context,
+                current_step=step,
+                total_samples=total_samples,
+                token_budget=token_budget,
+                playbook_stats=stats,
+                use_ground_truth=not no_ground_truth,
+                use_json_mode=use_json_mode,
+                call_id=f"{step_id}_adv_curate",
+                log_dir=log_dir,
+                next_global_id=self.next_global_id,
+            )
+
+            if self.use_bulletpoint_analyzer and self.bulletpoint_analyzer:
+                self.playbook = self.bulletpoint_analyzer.analyze(
+                    playbook=self.playbook,
+                    threshold=self.bulletpoint_analyzer_threshold,
+                    merge=True,
+                )
+
+            if self.use_rae and self.playbook_retriever:
+                self.playbook_retriever.update_index(self.playbook)
+
+        adversarial_sample = {
+            "question": adv_question,
+            "context": adv_context,
+            "target": adv_target,
+            "attack_rationale": attack_rationale,
+            "vulnerability_hint": vulnerability_hint,
+            "source": "adversarial",
+        }
+        log_bullet_usage(
+            usage_log_path, epoch, step, adversarial_sample, adv_bullet_ids,
+            playbook=self.playbook,
+            reflection_content=None if adv_correct else reflection_content,
+            is_correct=adv_correct,
+        )
+
+        return {
+            "question": adv_question,
+            "context": adv_context,
+            "target": adv_target,
+            "predicted_answer": adv_answer,
+            "is_correct": adv_correct,
+            "attack_rationale": attack_rationale,
+            "vulnerability_hint": vulnerability_hint,
+        }
     
     def _train_single_sample(
         self,
@@ -702,6 +886,22 @@ class ACE:
             "playbook_num_tokens": count_tokens(self.playbook),
             "playbook_length": len(self.playbook)
         }
+
+        adversarial_result = self._run_adversarial_episode(
+            step_id=step_id,
+            epoch=epoch,
+            step=step,
+            usage_log_path=usage_log_path,
+            log_dir=log_dir,
+            config_params=config_params,
+            total_samples=total_samples,
+            base_question=question,
+            base_context=context,
+            base_target=target,
+            data_processor=data_processor,
+        )
+        if adversarial_result is not None:
+            tracking_dict["adversarial_result"] = adversarial_result
         
         return pre_train_answer, post_train_answer, tracking_dict
     

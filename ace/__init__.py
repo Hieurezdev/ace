@@ -46,8 +46,8 @@ Usage:
 """
 
 from .ace import ACE
-from .core import Generator, Reflector, Curator, BulletpointAnalyzer
+from .core import Generator, Reflector, Curator, AdversarialAgent, BulletpointAnalyzer
 
-__all__ = ['ACE', 'Generator', 'Reflector', 'Curator', 'BulletpointAnalyzer']
+__all__ = ['ACE', 'Generator', 'Reflector', 'Curator', 'AdversarialAgent', 'BulletpointAnalyzer']
 
 __version__ = "1.0.0"
