@@ -111,6 +111,11 @@ ace_system = ACE(
     rae_top_k=10,
     use_failure_memory=True, # Analogical Reflection: retrieve similar past failures
     failure_memory_top_k=3,  # shares BGE-M3 with RAE — no extra model load
+    use_adversarial=True,    # verified active playbook stress testing
+    adversarial_frequency=10,
+    adversarial_num_candidates=5,
+    adversarial_verifier_min_confidence=0.80,
+    adversarial_verifier_max_ambiguity=0.20,
 )
 
 # Prepare configuration
@@ -135,6 +140,11 @@ config = {
     # Analogical Reflection
     'use_failure_memory': True,
     'failure_memory_top_k': 3,
+    'use_adversarial': True,
+    'adversarial_frequency': 10,
+    'adversarial_num_candidates': 5,
+    'adversarial_verifier_min_confidence': 0.80,
+    'adversarial_verifier_max_ambiguity': 0.20,
 }
 
 # Offline adaptation
@@ -259,6 +269,12 @@ uv run python -m eval.finance.run \
 | `--rae_top_k` | Number of Top-K bullets to retrieve per query when RAE is enabled | 10 |
 | `--use_failure_memory` | Enable Analogical Reflection: retrieve similar past failures at reflection time so the Reflector can reason by analogy. Shares the BGE-M3 model with RAE when both are enabled — no extra memory cost | False |
 | `--failure_memory_top_k` | Number of similar past failures to retrieve per reflection step | 3 |
+| `--use_adversarial` | Enable verified adversarial playbook stress testing | False |
+| `--adversarial_frequency` | Run the adversarial pipeline every N training steps | 10 |
+| `--adversarial_model` | Model used by the Miner, Attack Generator, and Verifier; defaults to the Generator model | Optional |
+| `--adversarial_num_candidates` | Number of candidate attacks generated before verification and selection | 5 |
+| `--adversarial_verifier_min_confidence` | Minimum verifier confidence required to accept a candidate | 0.80 |
+| `--adversarial_verifier_max_ambiguity` | Maximum ambiguity allowed for an accepted candidate | 0.20 |
 
 </details>
 

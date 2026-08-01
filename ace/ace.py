@@ -48,6 +48,9 @@ class ACE:
         use_adversarial: bool = False,
         adversarial_frequency: int = 10,
         adversarial_model: Optional[str] = None,
+        adversarial_num_candidates: int = 5,
+        adversarial_verifier_min_confidence: float = 0.80,
+        adversarial_verifier_max_ambiguity: float = 0.20,
     ):
         """
         Initialize the ACE system.
@@ -70,6 +73,9 @@ class ACE:
             use_adversarial: Enable adversarial agent for active playbook stress testing.
             adversarial_frequency: Run adversarial episode every N steps (only in train modes).
             adversarial_model: Model name for adversarial agent (defaults to generator model).
+            adversarial_num_candidates: Number of attacks generated before verification/selection.
+            adversarial_verifier_min_confidence: Minimum verifier confidence for accepting an attack.
+            adversarial_verifier_max_ambiguity: Maximum ambiguity allowed for an accepted attack.
         """
         # Initialize API clients
         generator_client, reflector_client, curator_client = initialize_clients(api_provider)
@@ -115,8 +121,17 @@ class ACE:
         self.use_adversarial = use_adversarial
         self.adversarial_frequency = adversarial_frequency
         adversarial_model_name = adversarial_model or generator_model
-        self.adversarial_agent = AdversarialAgent(
-            generator_client, api_provider, adversarial_model_name, max_tokens
+        self.adversarial_agent = (
+            AdversarialAgent(
+                generator_client,
+                api_provider,
+                adversarial_model_name,
+                max_tokens,
+                num_candidates=adversarial_num_candidates,
+                verifier_min_confidence=adversarial_verifier_min_confidence,
+                verifier_max_ambiguity=adversarial_verifier_max_ambiguity,
+            )
+            if use_adversarial else None
         )
         
         # Initialize playbook
@@ -196,6 +211,9 @@ class ACE:
             'failure_memory_top_k': config.get('failure_memory_top_k', 3),
             'use_adversarial': config.get('use_adversarial', False),
             'adversarial_frequency': config.get('adversarial_frequency', 10),
+            'adversarial_num_candidates': config.get('adversarial_num_candidates', 5),
+            'adversarial_verifier_min_confidence': config.get('adversarial_verifier_min_confidence', 0.80),
+            'adversarial_verifier_max_ambiguity': config.get('adversarial_verifier_max_ambiguity', 0.20),
         }
     
     def _setup_paths(self, save_dir: str, task_name: str, mode: str) -> Tuple[str, str]:
@@ -535,6 +553,10 @@ class ACE:
         adv_target = attack.get("target", "")
         attack_rationale = attack.get("attack_rationale", "")
         vulnerability_hint = attack.get("vulnerability_hint", "")
+        candidate_id = attack.get("candidate_id", "")
+        attack_category = attack.get("attack_category", "")
+        verifier_confidence = attack.get("verifier_confidence", 0.0)
+        selection_score = attack.get("selection_score", 0.0)
 
         adv_response, adv_bullet_ids, _ = self.generator.generate(
             question=adv_question,
@@ -555,11 +577,11 @@ class ACE:
             playbook_bullets = extract_playbook_bullets(
                 self.playbook, adv_bullet_ids
             )
-            environment_feedback = "Adversarial test: predicted answer does not match adversarial target."
-            if attack_rationale:
-                environment_feedback += f" Intended trap: {attack_rationale}"
-            if vulnerability_hint:
-                environment_feedback += f" Vulnerability hint: {vulnerability_hint}"
+            environment_feedback = (
+                "Adversarial test: predicted answer does not match the independently "
+                f"verified target (verifier confidence={verifier_confidence:.3f}). "
+                "Diagnose the failure independently."
+            )
 
             reflection_content, bullet_tags, _ = self.reflector.reflect(
                 question=adv_question,
@@ -599,8 +621,8 @@ class ACE:
             question_context = (
                 f"Adversarial question: {adv_question}\n"
                 f"Context: {adv_context}\n"
-                f"Attack rationale: {attack_rationale}\n"
-                f"Vulnerability hint: {vulnerability_hint}"
+                f"Verified target: {adv_target}\n"
+                f"Attack category: {attack_category}"
             )
             self.playbook, self.next_global_id, _, _ = self.curator.curate(
                 current_playbook=self.playbook,
@@ -634,7 +656,31 @@ class ACE:
             "attack_rationale": attack_rationale,
             "vulnerability_hint": vulnerability_hint,
             "source": "adversarial",
+            "candidate_id": candidate_id,
+            "attack_category": attack_category,
+            "verifier_confidence": verifier_confidence,
+            "selection_score": selection_score,
         }
+        log_adversarial_episode(
+            log_dir,
+            {
+                "step_id": step_id,
+                "epoch": epoch,
+                "step": step,
+                "question": adv_question,
+                "context": adv_context,
+                "target": adv_target,
+                "predicted_answer": adv_answer,
+                "is_correct": adv_correct,
+                "attack_rationale": attack_rationale,
+                "vulnerability_hint": vulnerability_hint,
+                "bullet_ids": adv_bullet_ids,
+                "candidate_id": candidate_id,
+                "attack_category": attack_category,
+                "verifier_confidence": verifier_confidence,
+                "selection_score": selection_score,
+            },
+        )
         log_bullet_usage(
             usage_log_path, epoch, step, adversarial_sample, adv_bullet_ids,
             playbook=self.playbook,
@@ -650,6 +696,10 @@ class ACE:
             "is_correct": adv_correct,
             "attack_rationale": attack_rationale,
             "vulnerability_hint": vulnerability_hint,
+            "candidate_id": candidate_id,
+            "attack_category": attack_category,
+            "verifier_confidence": verifier_confidence,
+            "selection_score": selection_score,
         }
     
     def _train_single_sample(

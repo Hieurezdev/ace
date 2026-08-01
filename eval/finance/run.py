@@ -96,6 +96,12 @@ def parse_args():
                         help="Run adversarial episode every N steps (default: 10)")
     parser.add_argument("--adversarial_model", type=str, default=None,
                         help="Model for adversarial agent (defaults to generator model)")
+    parser.add_argument("--adversarial_num_candidates", type=int, default=5,
+                        help="Number of adversarial candidates generated per episode (default: 5)")
+    parser.add_argument("--adversarial_verifier_min_confidence", type=float, default=0.80,
+                        help="Minimum verifier confidence for accepting an attack (default: 0.80)")
+    parser.add_argument("--adversarial_verifier_max_ambiguity", type=float, default=0.20,
+                        help="Maximum ambiguity allowed for an attack (default: 0.20)")
     
     # Output configuration
     parser.add_argument("--save_path", type=str, required=True,
@@ -237,6 +243,9 @@ def main():
         adversarial_model=args.adversarial_model,
         use_adversarial=args.use_adversarial,
         adversarial_frequency=args.adversarial_frequency,
+        adversarial_num_candidates=args.adversarial_num_candidates,
+        adversarial_verifier_min_confidence=args.adversarial_verifier_min_confidence,
+        adversarial_verifier_max_ambiguity=args.adversarial_verifier_max_ambiguity,
     )
     
     # Prepare configuration
@@ -264,6 +273,9 @@ def main():
         'api_provider': args.api_provider,
         'use_adversarial': args.use_adversarial,
         'adversarial_frequency': args.adversarial_frequency,
+        'adversarial_num_candidates': args.adversarial_num_candidates,
+        'adversarial_verifier_min_confidence': args.adversarial_verifier_min_confidence,
+        'adversarial_verifier_max_ambiguity': args.adversarial_verifier_max_ambiguity,
         'seed': args.seed,
     }
     

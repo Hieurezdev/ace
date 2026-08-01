@@ -257,7 +257,7 @@ def log_problematic_request(call_id, prompt, model, api_params, exception, log_d
         json.dump(problem_info, f, indent=2, ensure_ascii=False)
     
     print(f"[PROBLEM LOG] Saved problematic request to: problematic_requests/{filename}")
-    
+
     # Also create a summary log
     summary_file = os.path.join(problem_log_dir, "summary.jsonl")
     summary_entry = {
@@ -270,9 +270,23 @@ def log_problematic_request(call_id, prompt, model, api_params, exception, log_d
         "json_mode": api_params.get("response_format", {}).get("type") == "json_object",
         "api_key_used": current_api_key
     }
-    
+
     with open(summary_file, 'a') as f:
         f.write(json.dumps(summary_entry, ensure_ascii=False) + '\n')
+
+
+def log_adversarial_episode(log_dir, episode_info):
+    """Log adversarial agent usage for analysis and debugging."""
+    if not log_dir:
+        return
+
+    os.makedirs(log_dir, exist_ok=True)
+    filepath = os.path.join(log_dir, "adversarial_episodes.jsonl")
+    episode_info = dict(episode_info)
+    episode_info["timestamp"] = datetime.now().isoformat()
+
+    with open(filepath, "a", encoding="utf-8") as f:
+        f.write(json.dumps(episode_info, ensure_ascii=False) + "\n")
 
 def log_curator_failure(save_path, step, failure_type, curator_response, epoch, error_details=None):
     """Log curator failures to a dedicated log file for analysis"""
