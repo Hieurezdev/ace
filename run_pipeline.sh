@@ -60,15 +60,13 @@ uv run python -m eval.finance.run \
     --task_name formula \
     --mode offline \
     --save_path results \
-    --api_provider sglang \
-    --use_rae \
-    --rae_top_k 10 \
+    --api_provider vllm \
     --use_adversarial \
     --adversarial_frequency 10 \
     --adversarial_num_candidates 5 \
     --adversarial_verifier_min_confidence 0.80 \
     --adversarial_verifier_max_ambiguity 0.20 \
-    --adversarial_model Qwen/Qwen2-7B-Instruct \
+    --adversarial_model Qwen/Qwen3-7B-Instruct \
     --num_epochs 1 \
     --max_num_rounds 3 \
     --generator_model Qwen/Qwen2-7B-Instruct \
