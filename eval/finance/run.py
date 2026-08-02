@@ -7,6 +7,7 @@ import os
 import json
 import openai
 import argparse
+from pathlib import Path
 from datetime import datetime
 from .data_processor import DataProcessor
 
@@ -54,6 +55,10 @@ def parse_args():
                         help="Update playbook every N samples for evaluation in online mode")
     parser.add_argument("--save_steps", type=int, default=50,
                         help="Save intermediate playbooks every N steps")
+    parser.add_argument("--resume_from_step", type=int, default=1,
+                        help="Resume offline training from this 1-based sample index")
+    parser.add_argument("--skip_test_set", action="store_true",
+                        help="Skip initial/final test set evaluation")
     
     # System configuration
     parser.add_argument("--max_tokens", type=int, default=4096,
@@ -256,6 +261,7 @@ def main():
         'eval_steps': args.eval_steps,
         'online_eval_frequency': args.online_eval_frequency,
         'save_steps': args.save_steps,
+        'resume_from_step': args.resume_from_step,
         'playbook_token_budget': args.playbook_token_budget,
         'task_name': args.task_name,
         'mode': args.mode,
@@ -278,13 +284,21 @@ def main():
         'adversarial_verifier_max_ambiguity': args.adversarial_verifier_max_ambiguity,
         'seed': args.seed,
     }
+
+    if args.resume_from_step > 1 and args.initial_playbook_path:
+        config['resume_run_path'] = str(Path(args.initial_playbook_path).resolve().parent.parent)
     
     # Execute using the unified run method
+    run_test_samples = test_samples
+    if args.mode == "offline" and (args.skip_test_set or args.resume_from_step > 1):
+        print("Skipping test set evaluation for offline run")
+        run_test_samples = None
+
     results = ace_system.run(
         mode=args.mode,
         train_samples=train_samples,
         val_samples=val_samples,
-        test_samples=test_samples,
+        test_samples=run_test_samples,
         data_processor=data_processor,
         config=config
     )

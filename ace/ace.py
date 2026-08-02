@@ -197,6 +197,8 @@ class ACE:
             'curator_frequency': config.get('curator_frequency', 1),
             'eval_steps': config.get('eval_steps', 100),
             'save_steps': config.get('save_steps', 50),
+            'resume_from_step': config.get('resume_from_step', 1),
+            'resume_run_path': config.get('resume_run_path'),
             'token_budget': config.get('playbook_token_budget', 80000),
             'task_name': config.get('task_name', 'default'),
             'use_json_mode': config.get('json_mode', False),
@@ -216,7 +218,13 @@ class ACE:
             'adversarial_verifier_max_ambiguity': config.get('adversarial_verifier_max_ambiguity', 0.20),
         }
     
-    def _setup_paths(self, save_dir: str, task_name: str, mode: str) -> Tuple[str, str]:
+    def _setup_paths(
+        self,
+        save_dir: str,
+        task_name: str,
+        mode: str,
+        resume_run_path: Optional[str] = None,
+    ) -> Tuple[str, str]:
         """
         Setup logging paths and directories.
         
@@ -224,14 +232,20 @@ class ACE:
             save_dir: Base path for saving results
             task_name: task name
             mode: 'offline', 'online', or 'eval_only'
+            resume_run_path: Existing run folder to continue writing into
             
         Returns:
             Tuple of (usage_log_path, playbook_dir)
         """
-        # Create timestamped run folder
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        run_folder = f"ace_run_{timestamp}_{task_name}_{mode}"
-        save_path = os.path.join(save_dir, run_folder)
+        # Reuse an existing run folder when resuming so new artifacts append to
+        # the same location as the initial playbook and prior logs.
+        if resume_run_path:
+            save_path = resume_run_path
+        else:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            run_folder = f"ace_run_{timestamp}_{task_name}_{mode}"
+            save_path = os.path.join(save_dir, run_folder)
+
         os.makedirs(save_path, exist_ok=True)
         log_dir = os.path.join(save_path, "detailed_llm_logs")
         os.makedirs(log_dir, exist_ok=True)
@@ -285,14 +299,19 @@ class ACE:
         config_params = self._extract_config_params(config)
         task_name = config_params['task_name']
         save_dir = config_params['save_dir']
+        resume_run_path = config_params.get('resume_run_path')
         
         # Setup paths based on mode
         if mode == 'eval_only':
-            save_path, log_dir = self._setup_paths(save_dir, task_name, mode)
+            save_path, log_dir = self._setup_paths(
+                save_dir, task_name, mode, resume_run_path=resume_run_path
+            )
             usage_log_path = None
             playbook_dir = None
         else:
-            save_path, usage_log_path, playbook_dir, log_dir = self._setup_paths(save_dir, task_name, mode)
+            save_path, usage_log_path, playbook_dir, log_dir = self._setup_paths(
+                save_dir, task_name, mode, resume_run_path=resume_run_path
+            )
         
         # Save configuration
         config_path = os.path.join(save_path, "run_config.json")
@@ -306,6 +325,11 @@ class ACE:
                 "adversarial_model": self.adversarial_agent.model if self.adversarial_agent else None,
                 "config": config,
             }, f, indent=2)
+
+        if resume_run_path:
+            current_playbook_path = os.path.join(save_path, "current_playbook.txt")
+            with open(current_playbook_path, "w") as f:
+                f.write(self.playbook)
         
         # Print initial banner
         print(f"\n{'='*60}")
@@ -988,9 +1012,18 @@ class ACE:
         num_epochs = config_params['num_epochs']
         eval_steps = config_params['eval_steps']
         save_steps = config_params['save_steps']
+        resume_from_step = max(1, int(config_params.get('resume_from_step', 1)))
         test_workers = config_params['test_workers']
         use_json_mode = config_params['use_json_mode']
         curator_frequency = config_params['curator_frequency']
+
+        if resume_from_step > len(train_samples) + 1:
+            raise ValueError(
+                f"resume_from_step={resume_from_step} exceeds dataset length {len(train_samples)}"
+            )
+
+        start_index = max(resume_from_step - 1, 0)
+        train_samples_to_run = train_samples[start_index:]
         
         # Initialize tracking
         results = []
@@ -1001,6 +1034,9 @@ class ACE:
 
         print(f"Total epochs: {num_epochs}")
         print(f"Train samples per epoch: {len(train_samples)}")
+        if start_index > 0:
+            print(f"Resuming from sample {resume_from_step} (skipping first {start_index} samples)")
+            print(f"Remaining samples per epoch: {len(train_samples_to_run)}")
         print(f"Val samples: {len(val_samples)}")
         print(f"Curator frequency: every {curator_frequency} steps")
         print(f"Evaluation frequency: every {eval_steps} steps\n")
@@ -1016,8 +1052,7 @@ class ACE:
             epoch_answers_post_train = []
             epoch_targets_post_train = []
             
-            for step, task_dict in enumerate(train_samples):
-                step += 1
+            for step, task_dict in enumerate(train_samples_to_run, start=resume_from_step):
                 print(f"\n--- Step {step}/{len(train_samples)} ---")
                 
                 target = task_dict.get("target", "")
@@ -1145,6 +1180,11 @@ class ACE:
         final_playbook_path = os.path.join(save_path, f"final_playbook.txt")
         with open(final_playbook_path, "w") as f:
             f.write(self.playbook)
+
+        if resume_run_path:
+            current_playbook_path = os.path.join(save_path, "current_playbook.txt")
+            with open(current_playbook_path, "w") as f:
+                f.write(self.playbook)
         
         # Save best playbook
         best_playbook_path = os.path.join(save_path, f"best_playbook.txt")

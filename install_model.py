@@ -19,7 +19,7 @@ def default_cache_dir() -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model-id", default="Qwen/Qwen2-7B-Instruct")
+    parser.add_argument("--model-id", default="Qwen/Qwen3-4B-Instruct-2507")
     parser.add_argument("--save-dir", default=os.environ.get("MODEL_DIR", default_model_dir()))
     parser.add_argument("--cache-dir", default=os.environ.get("HF_HOME", default_cache_dir()))
     parser.add_argument("--min-free-gb", type=int, default=10)

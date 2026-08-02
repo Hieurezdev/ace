@@ -66,6 +66,11 @@ class AdversarialAgent:
         call_id: str,
         log_dir: Optional[str],
     ) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
+        json_key_by_role = {
+            "adversarial_miner": "vulnerabilities",
+            "adversarial_generator": "candidates",
+            "adversarial_verifier": "verifications",
+        }
         response, call_info = timed_llm_call(
             self.api_client,
             self.api_provider,
@@ -77,7 +82,7 @@ class AdversarialAgent:
             log_dir=log_dir,
             use_json_mode=True,
         )
-        parsed = extract_json_from_text(response)
+        parsed = extract_json_from_text(response, json_key=json_key_by_role.get(role))
         if not isinstance(parsed, dict):
             log_adversarial_episode(log_dir, {
                 "step_id": call_id,

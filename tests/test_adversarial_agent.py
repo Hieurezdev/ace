@@ -1,6 +1,7 @@
 import unittest
 
 from ace.core.adversarial_agent import AdversarialAgent
+from playbook_utils import extract_json_from_text
 
 
 class AdversarialSelectorTests(unittest.TestCase):
@@ -93,6 +94,33 @@ class AdversarialSelectorTests(unittest.TestCase):
         self.assertEqual(selected["candidate_id"], "c2")
         self.assertTrue(selected["verified"])
         self.assertEqual(info["pipeline"], "mine-generate-verify-select")
+
+    def test_extract_json_recovers_complete_items_from_truncated_array(self):
+        raw = """{
+  "candidates": [
+    {
+      "candidate_id": "c1",
+      "question": "q1",
+      "target": "1",
+      "target_derivation": "d1"
+    },
+    {
+      "candidate_id": "c2",
+      "question": "q2",
+      "target": "2",
+      "target_derivation": "d2"
+    },
+    {
+      "candidate_id": "c3",
+      "question": "q3",
+      "target": "3",
+      "target_derivation": "d3"""
+
+        parsed = extract_json_from_text(raw, json_key="candidates")
+
+        self.assertIsInstance(parsed, dict)
+        self.assertEqual(len(parsed["candidates"]), 2)
+        self.assertEqual([item["candidate_id"] for item in parsed["candidates"]], ["c1", "c2"])
 
 
 if __name__ == "__main__":

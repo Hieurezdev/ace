@@ -28,7 +28,7 @@ uv pip install --python .venv/bin/python rouge_score==0.1.2 nltk==3.9.3 absl-py=
 
 echo ">>> 4. Start benchmark server..."
 uv run python benchmark/serve.py \
-    --model-path Qwen/Qwen2-7B-Instruct \
+    --model-path Qwen/Qwen3-4B-Instruct-2507 \
     --dp 1 \
     --port 62726 \
     --disable-cuda-graph \
@@ -57,26 +57,24 @@ export LLM_REQUEST_TIMEOUT_SECONDS=180
 
 echo ">>> 6. Run evaluation..."
 uv run python -m eval.finance.run \
-    --task_name formula \
+    --task_name finer_0.5 \
     --mode offline \
     --save_path results \
-    --api_provider sglang \
-    --use_rae \
-    --rae_top_k 10 \
+    --api_provider vllm \
     --use_adversarial \
-    --adversarial_frequency 10 \
+    --adversarial_frequency 1 \
     --adversarial_num_candidates 5 \
     --adversarial_verifier_min_confidence 0.80 \
     --adversarial_verifier_max_ambiguity 0.20 \
-    --adversarial_model Qwen/Qwen2-7B-Instruct \
+    --adversarial_model Qwen/Qwen3-4B-Instruct-2507 \
     --num_epochs 1 \
     --max_num_rounds 3 \
-    --generator_model Qwen/Qwen2-7B-Instruct \
-    --reflector_model Qwen/Qwen2-7B-Instruct \
-    --curator_model Qwen/Qwen2-7B-Instruct \
+    --generator_model Qwen/Qwen3-4B-Instruct-2507 \
+    --reflector_model Qwen/Qwen3-4B-Instruct-2507 \
+    --curator_model Qwen/Qwen3-4B-Instruct-2507 \
     --playbook_token_budget 4000 \
     --max_tokens 2048 \
-    --test_workers 1 \
+    --test_workers 5 \
     --seed 42 \
     --eval_steps 50 \
     --save_steps 25

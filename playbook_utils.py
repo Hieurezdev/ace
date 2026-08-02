@@ -322,6 +322,76 @@ def extract_json_from_text(text, json_key=None):
                 return result
             except json.JSONDecodeError:
                 continue
+
+        def find_object_end(text, start_index):
+            """Return the end index for a balanced JSON object starting at start_index."""
+            depth = 0
+            in_string = False
+            escape = False
+
+            for index in range(start_index, len(text)):
+                char = text[index]
+
+                if in_string:
+                    if escape:
+                        escape = False
+                    elif char == '\\':
+                        escape = True
+                    elif char == '"':
+                        in_string = False
+                    continue
+
+                if char == '"':
+                    in_string = True
+                elif char == '{':
+                    depth += 1
+                elif char == '}':
+                    depth -= 1
+                    if depth == 0:
+                        return index + 1
+
+            return None
+
+        def recover_array_items(text, key):
+            """Recover complete JSON objects from a possibly truncated array field."""
+            if not key:
+                return None
+
+            match = re.search(rf'"{re.escape(key)}"\s*:\s*\[', text)
+            if not match:
+                return None
+
+            items = []
+            index = match.end()
+
+            while index < len(text):
+                while index < len(text) and text[index] in ' \t\r\n,':
+                    index += 1
+
+                if index >= len(text) or text[index] == ']':
+                    break
+
+                if text[index] != '{':
+                    index += 1
+                    continue
+
+                object_end = find_object_end(text, index)
+                if object_end is None:
+                    break
+
+                candidate = text[index:object_end]
+                try:
+                    items.append(json.loads(candidate))
+                except json.JSONDecodeError:
+                    pass
+
+                index = object_end
+
+            return items or None
+
+        recovered_items = recover_array_items(text, json_key)
+        if recovered_items is not None:
+            return {json_key: recovered_items}
                 
     except Exception as e:
         print(f"Failed to extract JSON: {e}")
