@@ -141,8 +141,9 @@ class ACE:
             self.playbook = self._initialize_empty_playbook()
 
         self.best_playbook = self.playbook
-        # Track global bullet ID
-        self.next_global_id = 1
+        # Track global bullet ID; continue from the highest existing bullet id
+        # so resumed runs never reuse ids from the initial playbook.
+        self.next_global_id = get_next_global_id(self.playbook)
 
         # Pre-build RAE index from the initial playbook so retrieval works from step 1
         # (BGE-M3 is lazy-loaded here: downloaded to ~/.cache/huggingface/ if not cached)
