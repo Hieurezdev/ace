@@ -292,6 +292,7 @@ results/
     ├── train_results.json             # Training results
     ├── val_results.json               # Validation results and error logs
     ├── pre_train_post_train_results.json     # Detailed pre-train and post-train generator output for each training sample
+    ├── detailed_llm_logs/adversarial_episodes.jsonl # Miner/generator/verifier/executor/reflector/curator events
     ├── final_playbook.txt             # Final evolved context
     ├── best_playbook.txt              # Best performing context (only for offline training)
     ├── bullet_usage_log.jsonl         # Bullet usage tracking

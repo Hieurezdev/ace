@@ -559,7 +559,18 @@ class ACE:
         token_budget = config_params['token_budget']
         task_name = config_params['task_name']
 
-        attack, _ = self.adversarial_agent.generate_attack(
+        episode_meta = {
+            "step_id": step_id,
+            "epoch": epoch,
+            "step": step,
+        }
+        log_adversarial_episode(log_dir, {
+            **episode_meta,
+            "event": "episode_started",
+            "task_name": task_name,
+        })
+
+        attack, pipeline_info = self.adversarial_agent.generate_attack(
             playbook=self.playbook,
             task_name=task_name,
             recent_question=base_question,
@@ -571,6 +582,15 @@ class ACE:
         )
 
         if not attack:
+            log_adversarial_episode(log_dir, {
+                **episode_meta,
+                "event": "pipeline_rejected",
+                "reason": pipeline_info.get("rejection_reason", "unknown"),
+                "pipeline": pipeline_info.get("pipeline"),
+                "selected_candidate_id": pipeline_info.get("selected_candidate_id"),
+                "reflector_status": "not_run",
+                "curator_status": "not_run",
+            })
             return None
 
         adv_question = attack.get("question", "")
@@ -583,7 +603,7 @@ class ACE:
         verifier_confidence = attack.get("verifier_confidence", 0.0)
         selection_score = attack.get("selection_score", 0.0)
 
-        adv_response, adv_bullet_ids, _ = self.generator.generate(
+        adv_response, adv_bullet_ids, executor_call_info = self.generator.generate(
             question=adv_question,
             playbook=self.playbook,
             context=adv_context,
@@ -597,6 +617,20 @@ class ACE:
         adv_answer = extract_answer(adv_response)
         adv_correct = data_processor.answer_is_correct(adv_answer, adv_target)
         reflection_content = "(empty)"
+        log_adversarial_episode(log_dir, {
+            **episode_meta,
+            "event": "executor_result",
+            "candidate_id": candidate_id,
+            "question": adv_question,
+            "target": adv_target,
+            "predicted_answer": adv_answer,
+            "is_correct": adv_correct,
+            "bullet_ids": adv_bullet_ids,
+            "call_id": executor_call_info.get("call_id"),
+            "total_time": executor_call_info.get("total_time"),
+            "prompt_num_tokens": executor_call_info.get("prompt_num_tokens"),
+            "response_num_tokens": executor_call_info.get("response_num_tokens"),
+        })
 
         if not adv_correct:
             playbook_bullets = extract_playbook_bullets(
@@ -608,7 +642,7 @@ class ACE:
                 "Diagnose the failure independently."
             )
 
-            reflection_content, bullet_tags, _ = self.reflector.reflect(
+            reflection_content, bullet_tags, reflector_call_info = self.reflector.reflect(
                 question=adv_question,
                 reasoning_trace=adv_response,
                 predicted_answer=adv_answer,
@@ -621,6 +655,18 @@ class ACE:
                 log_dir=log_dir,
                 failure_memory=self.failure_memory,
             )
+            log_adversarial_episode(log_dir, {
+                **episode_meta,
+                "event": "reflector_result",
+                "status": "completed",
+                "candidate_id": candidate_id,
+                "reflection": reflection_content,
+                "bullet_tags": bullet_tags,
+                "call_id": reflector_call_info.get("call_id"),
+                "total_time": reflector_call_info.get("total_time"),
+                "prompt_num_tokens": reflector_call_info.get("prompt_num_tokens"),
+                "response_num_tokens": reflector_call_info.get("response_num_tokens"),
+            })
 
             if bullet_tags:
                 self.playbook = update_bullet_counts(
@@ -649,7 +695,7 @@ class ACE:
                 f"Verified target: {adv_target}\n"
                 f"Attack category: {attack_category}"
             )
-            self.playbook, self.next_global_id, _, _ = self.curator.curate(
+            self.playbook, self.next_global_id, curator_operations, curator_call_info = self.curator.curate(
                 current_playbook=self.playbook,
                 recent_reflection=reflection_content,
                 question_context=question_context,
@@ -663,6 +709,19 @@ class ACE:
                 log_dir=log_dir,
                 next_global_id=self.next_global_id,
             )
+            log_adversarial_episode(log_dir, {
+                **episode_meta,
+                "event": "curator_result",
+                "status": "completed" if curator_operations else "completed_no_operations",
+                "candidate_id": candidate_id,
+                "operations": curator_operations,
+                "playbook_stats_before": stats,
+                "playbook_stats_after": get_playbook_stats(self.playbook),
+                "call_id": curator_call_info.get("call_id"),
+                "total_time": curator_call_info.get("total_time"),
+                "prompt_num_tokens": curator_call_info.get("prompt_num_tokens"),
+                "response_num_tokens": curator_call_info.get("response_num_tokens"),
+            })
 
             if self.use_bulletpoint_analyzer and self.bulletpoint_analyzer:
                 self.playbook = self.bulletpoint_analyzer.analyze(
@@ -673,6 +732,21 @@ class ACE:
 
             if self.use_rae and self.playbook_retriever:
                 self.playbook_retriever.update_index(self.playbook)
+        else:
+            log_adversarial_episode(log_dir, {
+                **episode_meta,
+                "event": "reflector_skipped",
+                "status": "not_run",
+                "candidate_id": candidate_id,
+                "reason": "executor_answer_correct",
+            })
+            log_adversarial_episode(log_dir, {
+                **episode_meta,
+                "event": "curator_skipped",
+                "status": "not_run",
+                "candidate_id": candidate_id,
+                "reason": "executor_answer_correct",
+            })
 
         adversarial_sample = {
             "question": adv_question,
@@ -689,9 +763,8 @@ class ACE:
         log_adversarial_episode(
             log_dir,
             {
-                "step_id": step_id,
-                "epoch": epoch,
-                "step": step,
+                **episode_meta,
+                "event": "episode_completed",
                 "question": adv_question,
                 "context": adv_context,
                 "target": adv_target,

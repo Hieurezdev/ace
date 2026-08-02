@@ -61,6 +61,7 @@ uv run python -m eval.finance.run \
     --mode offline \
     --save_path results \
     --api_provider vllm \
+    --api_provider vllm \
     --use_adversarial \
     --adversarial_frequency 1 \
     --adversarial_num_candidates 5 \
