@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from ..prompts.adversarial import (
     ATTACK_GENERATOR_PROMPT,
     ATTACK_VERIFIER_PROMPT,
+    LEGACY_ADVERSARIAL_PROMPT,
     VULNERABILITY_MINER_PROMPT,
 )
 from llm import timed_llm_call
@@ -30,6 +31,7 @@ class AdversarialAgent:
         max_vulnerabilities: int = 5,
         verifier_min_confidence: float = 0.80,
         verifier_max_ambiguity: float = 0.20,
+        mode: str = "verified",
     ):
         self.api_client = api_client
         self.api_provider = api_provider
@@ -39,6 +41,9 @@ class AdversarialAgent:
         self.max_vulnerabilities = max(1, max_vulnerabilities)
         self.verifier_min_confidence = self._score(verifier_min_confidence)
         self.verifier_max_ambiguity = self._score(verifier_max_ambiguity)
+        if mode not in {"legacy", "verified"}:
+            raise ValueError("adversarial mode must be 'legacy' or 'verified'")
+        self.mode = mode
 
     @staticmethod
     def _score(value: Any, default: float = 0.0) -> float:
@@ -242,7 +247,19 @@ class AdversarialAgent:
         call_id: str = "adv",
         log_dir: Optional[str] = None,
     ) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
-        """Run the complete verified adversarial pipeline."""
+        """Run either the legacy single-attack or verified pipeline."""
+        if self.mode == "legacy":
+            return self.generate_legacy_attack(
+                playbook=playbook,
+                task_name=task_name,
+                recent_question=recent_question,
+                recent_context=recent_context,
+                recent_target=recent_target,
+                use_json_mode=use_json_mode,
+                call_id=call_id,
+                log_dir=log_dir,
+            )
+
         del use_json_mode  # pipeline stages always require structured JSON
         stage_info: Dict[str, Any] = {"pipeline": "mine-generate-verify-select"}
 
@@ -279,3 +296,74 @@ class AdversarialAgent:
 
         stage_info["selected_candidate_id"] = selected["candidate_id"]
         return selected, stage_info
+
+    def generate_legacy_attack(
+        self,
+        playbook: str,
+        task_name: str,
+        recent_question: str,
+        recent_context: str,
+        recent_target: str,
+        use_json_mode: bool = False,
+        call_id: str = "adv",
+        log_dir: Optional[str] = None,
+    ) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
+        """Original one-call adversarial generator, retained for ablations."""
+        prompt = LEGACY_ADVERSARIAL_PROMPT.format(
+            playbook=playbook,
+            task_name=task_name,
+            recent_question=recent_question,
+            recent_context=recent_context,
+            recent_target=recent_target,
+        )
+        response, call_info = timed_llm_call(
+            self.api_client,
+            self.api_provider,
+            self.model,
+            prompt,
+            role="adversarial_legacy",
+            call_id=call_id,
+            max_tokens=self.max_tokens,
+            log_dir=log_dir,
+            use_json_mode=use_json_mode,
+        )
+        attack = extract_json_from_text(response)
+        required = ("question", "context", "target", "attack_rationale", "vulnerability_hint")
+        if not isinstance(attack, dict) or any(key not in attack for key in required):
+            log_adversarial_episode(log_dir, {
+                "step_id": call_id,
+                "event": "legacy_parse_failure",
+                "stage": "adversarial_legacy",
+                "model": self.model,
+                "response_preview": self._clean_text(response)[:800],
+            })
+            return None, {
+                "pipeline": "legacy-single-attack",
+                "rejection_reason": "invalid_legacy_attack",
+                "generator": call_info,
+            }
+
+        normalized = {key: self._clean_text(attack.get(key)) for key in required}
+        if not normalized["question"] or not normalized["target"]:
+            return None, {
+                "pipeline": "legacy-single-attack",
+                "rejection_reason": "empty_question_or_target",
+                "generator": call_info,
+            }
+        normalized.update({
+            "candidate_id": "legacy-c1",
+            "attack_category": "legacy",
+            "verifier_confidence": 0.0,
+            "selection_score": 0.0,
+            "verified": False,
+        })
+        log_adversarial_episode(log_dir, {
+            "step_id": call_id,
+            "event": "legacy_attack_generated",
+            "attack": normalized,
+        })
+        return normalized, {
+            "pipeline": "legacy-single-attack",
+            "selected_candidate_id": "legacy-c1",
+            "generator": call_info,
+        }

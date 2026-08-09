@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from ace.core.adversarial_agent import AdversarialAgent
 from playbook_utils import extract_json_from_text
@@ -121,6 +122,25 @@ class AdversarialSelectorTests(unittest.TestCase):
         self.assertIsInstance(parsed, dict)
         self.assertEqual(len(parsed["candidates"]), 2)
         self.assertEqual([item["candidate_id"] for item in parsed["candidates"]], ["c1", "c2"])
+
+    @patch("ace.core.adversarial_agent.timed_llm_call")
+    def test_legacy_mode_uses_one_call_and_skips_verified_pipeline(self, mock_call):
+        mock_call.return_value = (
+            '{"question":"q","context":"ctx","target":"a",'
+            '"attack_rationale":"trap","vulnerability_hint":"gap"}',
+            {"call_id": "legacy-call"},
+        )
+        agent = AdversarialAgent(None, "fake", "fake-model", mode="legacy")
+
+        attack, info = agent.generate_attack(
+            playbook="playbook", task_name="task", recent_question="q0",
+            recent_context="ctx0", recent_target="a0", log_dir=None,
+        )
+
+        self.assertEqual(mock_call.call_count, 1)
+        self.assertEqual(attack["candidate_id"], "legacy-c1")
+        self.assertEqual(info["pipeline"], "legacy-single-attack")
+        self.assertFalse(attack["verified"])
 
 
 if __name__ == "__main__":

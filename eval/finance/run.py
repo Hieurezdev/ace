@@ -88,11 +88,25 @@ def parse_args():
                         help="Number of Top-K bullets to retrieve per query when RAE is enabled (default: 10)")
 
     # Failure Memory (Analogical Reflection) configuration
-    parser.add_argument("--use_failure_memory", action="store_true",
-                        help="Enable Analogical Reflection: retrieve similar past failures "
-                             "at reflection time. Shares the BGE-M3 model with RAE when both are enabled.")
+    failure_memory_group = parser.add_mutually_exclusive_group()
+    failure_memory_group.add_argument(
+        "--use_failure_memory",
+        action="store_true",
+        help=(
+            "Enable the original legacy Failure Memory Bank. Shares BGE-M3 "
+            "with RAE when both are enabled."
+        ),
+    )
     parser.add_argument("--failure_memory_top_k", type=int, default=3,
                         help="Number of similar past failures to retrieve per reflection step (default: 3)")
+    failure_memory_group.add_argument(
+        "--use_verified_failure_memory",
+        action="store_true",
+        help=(
+            "Enable schema-v2 verified failure memory with multi-stage retrieval. "
+            "The existing --use_failure_memory flag keeps legacy behavior."
+        ),
+    )
     
     # Adversarial agent configuration
     parser.add_argument("--use_adversarial", action="store_true",
@@ -101,6 +115,8 @@ def parse_args():
                         help="Run adversarial episode every N steps (default: 10)")
     parser.add_argument("--adversarial_model", type=str, default=None,
                         help="Model for adversarial agent (defaults to generator model)")
+    parser.add_argument("--adversarial_mode", choices=["legacy", "verified"], default="verified",
+                        help="Adversarial implementation: original single-call or verified pipeline")
     parser.add_argument("--adversarial_num_candidates", type=int, default=5,
                         help="Number of adversarial candidates generated per episode (default: 5)")
     parser.add_argument("--adversarial_verifier_min_confidence", type=float, default=0.80,
@@ -243,11 +259,13 @@ def main():
         bulletpoint_analyzer_threshold=args.bulletpoint_analyzer_threshold,
         use_rae=args.use_rae,
         rae_top_k=args.rae_top_k,
-        use_failure_memory=args.use_failure_memory,
+        use_failure_memory=(args.use_failure_memory or args.use_verified_failure_memory),
         failure_memory_top_k=args.failure_memory_top_k,
+        failure_memory_mode=("verified" if args.use_verified_failure_memory else "legacy"),
         adversarial_model=args.adversarial_model,
         use_adversarial=args.use_adversarial,
         adversarial_frequency=args.adversarial_frequency,
+        adversarial_mode=args.adversarial_mode,
         adversarial_num_candidates=args.adversarial_num_candidates,
         adversarial_verifier_min_confidence=args.adversarial_verifier_min_confidence,
         adversarial_verifier_max_ambiguity=args.adversarial_verifier_max_ambiguity,
@@ -274,11 +292,13 @@ def main():
         'bulletpoint_analyzer_threshold': args.bulletpoint_analyzer_threshold,
         'use_rae': args.use_rae,
         'rae_top_k': args.rae_top_k,
-        'use_failure_memory': args.use_failure_memory,
+        'use_failure_memory': (args.use_failure_memory or args.use_verified_failure_memory),
         'failure_memory_top_k': args.failure_memory_top_k,
+        'failure_memory_mode': ("verified" if args.use_verified_failure_memory else "legacy"),
         'api_provider': args.api_provider,
         'use_adversarial': args.use_adversarial,
         'adversarial_frequency': args.adversarial_frequency,
+        'adversarial_mode': args.adversarial_mode,
         'adversarial_num_candidates': args.adversarial_num_candidates,
         'adversarial_verifier_min_confidence': args.adversarial_verifier_min_confidence,
         'adversarial_verifier_max_ambiguity': args.adversarial_verifier_max_ambiguity,

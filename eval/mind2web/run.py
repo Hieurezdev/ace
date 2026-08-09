@@ -76,6 +76,8 @@ def parse_args():
                         help="Run adversarial episode every N steps (default: 10)")
     parser.add_argument("--adversarial_model", type=str, default=None,
                         help="Model for adversarial agent (defaults to generator model)")
+    parser.add_argument("--adversarial_mode", choices=["legacy", "verified"], default="verified",
+                        help="Adversarial implementation: original single-call or verified pipeline")
     parser.add_argument("--adversarial_num_candidates", type=int, default=5,
                         help="Number of adversarial candidates generated per episode (default: 5)")
     parser.add_argument("--adversarial_verifier_min_confidence", type=float, default=0.80,
@@ -202,6 +204,7 @@ def main():
         bulletpoint_analyzer_threshold=args.bulletpoint_analyzer_threshold,
         use_adversarial=args.use_adversarial,
         adversarial_frequency=args.adversarial_frequency,
+        adversarial_mode=args.adversarial_mode,
         adversarial_num_candidates=args.adversarial_num_candidates,
         adversarial_verifier_min_confidence=args.adversarial_verifier_min_confidence,
         adversarial_verifier_max_ambiguity=args.adversarial_verifier_max_ambiguity,
@@ -229,6 +232,7 @@ def main():
         'seed': args.seed,
         'use_adversarial': args.use_adversarial,
         'adversarial_frequency': args.adversarial_frequency,
+        'adversarial_mode': args.adversarial_mode,
         'adversarial_num_candidates': args.adversarial_num_candidates,
         'adversarial_verifier_min_confidence': args.adversarial_verifier_min_confidence,
         'adversarial_verifier_max_ambiguity': args.adversarial_verifier_max_ambiguity,

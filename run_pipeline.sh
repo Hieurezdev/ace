@@ -63,6 +63,7 @@ uv run python -m eval.finance.run \
     --api_provider vllm \
     --api_provider vllm \
     --use_adversarial \
+    --adversarial_mode legacy \
     --adversarial_frequency 1 \
     --adversarial_num_candidates 5 \
     --adversarial_verifier_min_confidence 0.80 \

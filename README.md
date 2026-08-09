@@ -269,7 +269,46 @@ uv run python -m eval.finance.run \
 | `--rae_top_k` | Number of Top-K bullets to retrieve per query when RAE is enabled | 10 |
 | `--use_failure_memory` | Enable Analogical Reflection: retrieve similar past failures at reflection time so the Reflector can reason by analogy. Shares the BGE-M3 model with RAE when both are enabled — no extra memory cost | False |
 | `--failure_memory_top_k` | Number of similar past failures to retrieve per reflection step | 3 |
+| `--use_verified_failure_memory` | Enable schema-v2 FMB: verified-only storage, semantic→lexical/usefulness reranking, and Curator-result attachment. Finance runner only initially; the old `--use_failure_memory` remains legacy | False |
+
+Finance FMB ablation flags:
+
+```bash
+# Original FMB (unchanged)
+uv run python -m eval.finance.run ... --use_failure_memory
+
+# Improved verified FMB
+uv run python -m eval.finance.run ... --use_verified_failure_memory --failure_memory_top_k 3
+```
+
+Use one FMB flag at a time. The verified flag rejects low-confidence or
+evidence-free failures and does not admit attacks produced by the legacy
+adversarial pipeline.
+
+Each finance run writes the complete verified-memory trace to:
+
+```text
+<run_folder>/detailed_llm_logs/failure_memory_events.jsonl
+<run_folder>/failure_memory_v2.jsonl
+```
+
+The event log contains initialization, verification decisions, rejected and
+stored failures, eligibility filtering, semantic candidates, reranking,
+retrieval results, and Curator attachment. The second file is the latest
+durable public snapshot of the memory bank.
+
+Verified FMB accepts these general learning failures:
+
+```text
+PLAYBOOK_GAP, PLAYBOOK_MISAPPLICATION, REASONING_ERROR,
+CALCULATION_ERROR, RETRIEVAL_ERROR, VERIFICATION_ERROR,
+INSTRUCTION_FOLLOWING_ERROR
+```
+
+Format, execution, environment, invalid-attack, and ambiguous-input failures
+remain diagnostic-only and are excluded from active reflection retrieval.
 | `--use_adversarial` | Enable verified adversarial playbook stress testing | False |
+| `--adversarial_mode` | Use `legacy` for the original single-call adversary or `verified` for Miner→Generator→Verifier→Selector | `verified` |
 | `--adversarial_frequency` | Run the adversarial pipeline every N training steps | 10 |
 | `--adversarial_model` | Model used by the Miner, Attack Generator, and Verifier; defaults to the Generator model | Optional |
 | `--adversarial_num_candidates` | Number of candidate attacks generated before verification and selection | 5 |

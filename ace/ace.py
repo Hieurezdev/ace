@@ -45,12 +45,14 @@ class ACE:
         rae_top_k: int = 10,
         use_failure_memory: bool = False,
         failure_memory_top_k: int = 3,
+        failure_memory_mode: str = "legacy",
         use_adversarial: bool = False,
         adversarial_frequency: int = 10,
         adversarial_model: Optional[str] = None,
         adversarial_num_candidates: int = 5,
         adversarial_verifier_min_confidence: float = 0.80,
         adversarial_verifier_max_ambiguity: float = 0.20,
+        adversarial_mode: str = "verified",
     ):
         """
         Initialize the ACE system.
@@ -70,12 +72,15 @@ class ACE:
                                 at reflection time to enrich the Reflector's analysis.
                                 Shares the BGE-M3 embedding model with RAE when both are enabled.
             failure_memory_top_k: Number of similar past failures to retrieve per reflection step.
+            failure_memory_mode: 'legacy' for the original bank or 'verified' for
+                                 evidence gating and multi-stage retrieval.
             use_adversarial: Enable adversarial agent for active playbook stress testing.
             adversarial_frequency: Run adversarial episode every N steps (only in train modes).
             adversarial_model: Model name for adversarial agent (defaults to generator model).
             adversarial_num_candidates: Number of attacks generated before verification/selection.
             adversarial_verifier_min_confidence: Minimum verifier confidence for accepting an attack.
             adversarial_verifier_max_ambiguity: Maximum ambiguity allowed for an accepted attack.
+            adversarial_mode: 'legacy' for one-call generation or 'verified' for the full pipeline.
         """
         # Initialize API clients
         generator_client, reflector_client, curator_client = initialize_clients(api_provider)
@@ -130,6 +135,7 @@ class ACE:
                 num_candidates=adversarial_num_candidates,
                 verifier_min_confidence=adversarial_verifier_min_confidence,
                 verifier_max_ambiguity=adversarial_verifier_max_ambiguity,
+                mode=adversarial_mode,
             )
             if use_adversarial else None
         )
@@ -160,9 +166,13 @@ class ACE:
             self.failure_memory = FailureMemoryBank(
                 encoder=shared_encoder,
                 top_k=failure_memory_top_k,
+                mode=failure_memory_mode,
             )
             src = "shared BGE-M3 from RAE" if shared_encoder is not None else "standalone BGE-M3"
-            print(f"✓ FailureMemoryBank initialized (top_k={failure_memory_top_k}, encoder={src})")
+            print(
+                f"✓ FailureMemoryBank initialized (mode={failure_memory_mode}, "
+                f"top_k={failure_memory_top_k}, encoder={src})"
+            )
         else:
             self.failure_memory = None
     
@@ -212,11 +222,13 @@ class ACE:
             'rae_top_k': config.get('rae_top_k', 10),
             'use_failure_memory': config.get('use_failure_memory', False),
             'failure_memory_top_k': config.get('failure_memory_top_k', 3),
+            'failure_memory_mode': config.get('failure_memory_mode', 'legacy'),
             'use_adversarial': config.get('use_adversarial', False),
             'adversarial_frequency': config.get('adversarial_frequency', 10),
             'adversarial_num_candidates': config.get('adversarial_num_candidates', 5),
             'adversarial_verifier_min_confidence': config.get('adversarial_verifier_min_confidence', 0.80),
             'adversarial_verifier_max_ambiguity': config.get('adversarial_verifier_max_ambiguity', 0.20),
+            'adversarial_mode': config.get('adversarial_mode', 'verified'),
         }
     
     def _setup_paths(
@@ -313,6 +325,9 @@ class ACE:
             save_path, usage_log_path, playbook_dir, log_dir = self._setup_paths(
                 save_dir, task_name, mode, resume_run_path=resume_run_path
             )
+
+        if self.failure_memory is not None:
+            self.failure_memory.set_log_dir(log_dir, task_name=task_name)
         
         # Save configuration
         config_path = os.path.join(save_path, "run_config.json")
@@ -593,6 +608,8 @@ class ACE:
             })
             return None
 
+        adversarial_pipeline = pipeline_info.get("pipeline", "unknown")
+        is_legacy_adversarial = adversarial_pipeline == "legacy-single-attack"
         adv_question = attack.get("question", "")
         adv_context = attack.get("context", "")
         adv_target = attack.get("target", "")
@@ -617,9 +634,11 @@ class ACE:
         adv_answer = extract_answer(adv_response)
         adv_correct = data_processor.answer_is_correct(adv_answer, adv_target)
         reflection_content = "(empty)"
+        failure_memory_id = None
         log_adversarial_episode(log_dir, {
             **episode_meta,
             "event": "executor_result",
+            "pipeline": adversarial_pipeline,
             "candidate_id": candidate_id,
             "question": adv_question,
             "target": adv_target,
@@ -636,11 +655,18 @@ class ACE:
             playbook_bullets = extract_playbook_bullets(
                 self.playbook, adv_bullet_ids
             )
-            environment_feedback = (
-                "Adversarial test: predicted answer does not match the independently "
-                f"verified target (verifier confidence={verifier_confidence:.3f}). "
-                "Diagnose the failure independently."
-            )
+            if is_legacy_adversarial:
+                environment_feedback = "Adversarial test: predicted answer does not match adversarial target."
+                if attack_rationale:
+                    environment_feedback += f" Intended trap: {attack_rationale}"
+                if vulnerability_hint:
+                    environment_feedback += f" Vulnerability hint: {vulnerability_hint}"
+            else:
+                environment_feedback = (
+                    "Adversarial test: predicted answer does not match the independently "
+                    f"verified target (verifier confidence={verifier_confidence:.3f}). "
+                    "Diagnose the failure independently."
+                )
 
             reflection_content, bullet_tags, reflector_call_info = self.reflector.reflect(
                 question=adv_question,
@@ -658,6 +684,7 @@ class ACE:
             log_adversarial_episode(log_dir, {
                 **episode_meta,
                 "event": "reflector_result",
+                "pipeline": adversarial_pipeline,
                 "status": "completed",
                 "candidate_id": candidate_id,
                 "reflection": reflection_content,
@@ -678,23 +705,56 @@ class ACE:
                     parsed = json.loads(reflection_content) if isinstance(reflection_content, str) else {}
                 except (json.JSONDecodeError, TypeError):
                     parsed = {}
-                self.failure_memory.add(
-                    question=adv_question,
-                    predicted_answer=adv_answer,
-                    ground_truth=adv_target,
-                    error_identification=parsed.get("error_identification", ""),
-                    root_cause=parsed.get("root_cause_analysis", ""),
-                    key_insight=parsed.get("key_insight", ""),
-                )
+                if self.failure_memory.mode == "verified":
+                    failure_memory_id = self.failure_memory.add_verified(
+                        question=adv_question,
+                        predicted_answer=adv_answer,
+                        ground_truth=adv_target,
+                        error_identification=parsed.get("error_identification", ""),
+                        root_cause=parsed.get("root_cause_analysis", ""),
+                        key_insight=parsed.get("key_insight", ""),
+                        verification={
+                            "verified": not is_legacy_adversarial,
+                            "confidence": verifier_confidence,
+                            "oracle_type": "adversarial_verifier",
+                        },
+                        evidence=[
+                            f"verified_target={adv_target}",
+                            f"observed_answer={adv_answer}",
+                            f"selection_score={selection_score}",
+                        ],
+                        source="adversarial",
+                        task_id=step_id,
+                        playbook_refs=list(adv_bullet_ids),
+                        vulnerability_id=attack.get("vulnerability_id", ""),
+                        candidate_id=candidate_id,
+                    )
+                else:
+                    failure_memory_id = self.failure_memory.add(
+                        question=adv_question,
+                        predicted_answer=adv_answer,
+                        ground_truth=adv_target,
+                        error_identification=parsed.get("error_identification", ""),
+                        root_cause=parsed.get("root_cause_analysis", ""),
+                        key_insight=parsed.get("key_insight", ""),
+                    )
 
             print("--- Running Curator for Adversarial Report ---")
             stats = get_playbook_stats(self.playbook)
-            question_context = (
-                f"Adversarial question: {adv_question}\n"
-                f"Context: {adv_context}\n"
-                f"Verified target: {adv_target}\n"
-                f"Attack category: {attack_category}"
-            )
+            if is_legacy_adversarial:
+                question_context = (
+                    f"Adversarial question: {adv_question}\n"
+                    f"Context: {adv_context}\n"
+                    f"Attack rationale: {attack_rationale}\n"
+                    f"Vulnerability hint: {vulnerability_hint}"
+                )
+            else:
+                question_context = (
+                    f"Adversarial question: {adv_question}\n"
+                    f"Context: {adv_context}\n"
+                    f"Verified target: {adv_target}\n"
+                    f"Attack category: {attack_category}"
+                )
             self.playbook, self.next_global_id, curator_operations, curator_call_info = self.curator.curate(
                 current_playbook=self.playbook,
                 recent_reflection=reflection_content,
@@ -709,9 +769,16 @@ class ACE:
                 log_dir=log_dir,
                 next_global_id=self.next_global_id,
             )
+            if self.failure_memory is not None and self.failure_memory.mode == "verified":
+                self.failure_memory.record_curator_result(
+                    failure_memory_id,
+                    curator_operations,
+                    applied=bool(curator_operations),
+                )
             log_adversarial_episode(log_dir, {
                 **episode_meta,
                 "event": "curator_result",
+                "pipeline": adversarial_pipeline,
                 "status": "completed" if curator_operations else "completed_no_operations",
                 "candidate_id": candidate_id,
                 "operations": curator_operations,
@@ -736,6 +803,7 @@ class ACE:
             log_adversarial_episode(log_dir, {
                 **episode_meta,
                 "event": "reflector_skipped",
+                "pipeline": adversarial_pipeline,
                 "status": "not_run",
                 "candidate_id": candidate_id,
                 "reason": "executor_answer_correct",
@@ -743,6 +811,7 @@ class ACE:
             log_adversarial_episode(log_dir, {
                 **episode_meta,
                 "event": "curator_skipped",
+                "pipeline": adversarial_pipeline,
                 "status": "not_run",
                 "candidate_id": candidate_id,
                 "reason": "executor_answer_correct",
@@ -765,6 +834,7 @@ class ACE:
             {
                 **episode_meta,
                 "event": "episode_completed",
+                "pipeline": adversarial_pipeline,
                 "question": adv_question,
                 "context": adv_context,
                 "target": adv_target,
@@ -876,13 +946,12 @@ class ACE:
         }
         
         reflection_content = "(empty)"
+        failure_memory_id = None
         
         # STEP 2: Reflection and regeneration
         if not is_correct:
-            # For incorrect answers - iterate reflection rounds
-            # Store failure in memory BEFORE reflection so later rounds in the
-            # same episode can already benefit from the bank (future episodes
-            # will have distilled insights from the completed reflection below).
+            # For incorrect answers, iterate reflection rounds. The verified
+            # bank stores only after reflection has produced a root cause.
             for round_num in range(max_num_rounds):
                 print(f"Reflection round {round_num + 1}/{max_num_rounds}")
                 
@@ -937,14 +1006,36 @@ class ACE:
                     parsed = json.loads(reflection_content) if isinstance(reflection_content, str) else {}
                 except (json.JSONDecodeError, TypeError):
                     parsed = {}
-                self.failure_memory.add(
-                    question=question,
-                    predicted_answer=pre_train_answer,
-                    ground_truth=target,
-                    error_identification=parsed.get("error_identification", ""),
-                    root_cause=parsed.get("root_cause_analysis", ""),
-                    key_insight=parsed.get("key_insight", ""),
-                )
+                if self.failure_memory.mode == "verified":
+                    failure_memory_id = self.failure_memory.add_verified(
+                        question=question,
+                        predicted_answer=pre_train_answer,
+                        ground_truth=target,
+                        error_identification=parsed.get("error_identification", ""),
+                        root_cause=parsed.get("root_cause_analysis", ""),
+                        key_insight=parsed.get("key_insight", ""),
+                        verification={
+                            "verified": True,
+                            "confidence": 1.0,
+                            "oracle_type": "finance_ground_truth",
+                        },
+                        evidence=[
+                            f"ground_truth={target}",
+                            f"initial_answer={pre_train_answer}",
+                        ],
+                        source="finance",
+                        task_id=step_id,
+                        playbook_refs=list(bullet_ids),
+                    )
+                else:
+                    failure_memory_id = self.failure_memory.add(
+                        question=question,
+                        predicted_answer=pre_train_answer,
+                        ground_truth=target,
+                        error_identification=parsed.get("error_identification", ""),
+                        root_cause=parsed.get("root_cause_analysis", ""),
+                        key_insight=parsed.get("key_insight", ""),
+                    )
 
         else:
             # For correct answers - still run reflector to tag helpful bullets
@@ -998,6 +1089,12 @@ class ACE:
                 log_dir=log_dir,
                 next_global_id=self.next_global_id
             )
+            if self.failure_memory is not None and self.failure_memory.mode == "verified":
+                self.failure_memory.record_curator_result(
+                    failure_memory_id,
+                    operations,
+                    applied=bool(operations),
+                )
             
             # Run bulletpoint analyzer if enabled
             if self.use_bulletpoint_analyzer and self.bulletpoint_analyzer:

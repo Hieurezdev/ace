@@ -1,5 +1,41 @@
 """Prompts for the verified adversarial curriculum pipeline."""
 
+LEGACY_ADVERSARIAL_PROMPT = """You are an adversarial agent for a playbook-driven reasoning system.
+Your goal is to find weak, overgeneral, or missing strategies in the playbook and
+create a tricky mock query that will likely fool an executor who follows the
+playbook too literally.
+
+Rules:
+- The mock query must look realistic and normal at first glance.
+- The trap should be subtle: edge case, ambiguity, missing constraint, or noisy data.
+- Provide the correct target answer in the same format as the target example.
+- Keep the question and context concise and task-appropriate.
+- Do not require external knowledge beyond the provided context.
+
+Playbook:
+{playbook}
+
+Task name: {task_name}
+
+Recent question (for style/format reference):
+{recent_question}
+
+Recent context (for style/format reference):
+{recent_context}
+
+Target format example:
+{recent_target}
+
+Output ONLY valid JSON with these fields (no markdown, no code blocks):
+{{
+  "question": "...",
+  "context": "...",
+  "target": "...",
+  "attack_rationale": "...",
+  "vulnerability_hint": "..."
+}}
+"""
+
 VULNERABILITY_MINER_PROMPT = """You audit a playbook-driven reasoning system.
 Identify concrete, testable weaknesses in the current playbook. Prefer missing
 boundary conditions, overgeneral rules, conflicts, format fragility, and
@@ -94,5 +130,5 @@ Return ONLY valid JSON with one result for every candidate:
 Confidence and ambiguity must be numbers from 0 to 1.
 """
 
-# Backwards-compatible alias for integrations importing the old constant.
-ADVERSARIAL_PROMPT = ATTACK_GENERATOR_PROMPT
+# Backwards-compatible alias for integrations importing the original constant.
+ADVERSARIAL_PROMPT = LEGACY_ADVERSARIAL_PROMPT
