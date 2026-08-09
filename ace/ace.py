@@ -397,7 +397,8 @@ class ACE:
                 save_path=save_path,
                 usage_log_path=usage_log_path,
                 playbook_dir=playbook_dir,
-                log_dir=log_dir
+                log_dir=log_dir,
+                resume_run_path=resume_run_path
             )
             results['training_results'] = training_results
             
@@ -1159,7 +1160,8 @@ class ACE:
         save_path: str,
         usage_log_path: str,
         playbook_dir: str,
-        log_dir: str
+        log_dir: str,
+        resume_run_path: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Run offline training

@@ -27,21 +27,17 @@ uv pip install --python .venv/bin/python evaluate==0.4.6
 uv pip install --python .venv/bin/python rouge_score==0.1.2 nltk==3.9.3 absl-py==2.4.0
 
 echo ">>> 4. Start benchmark server..."
-uv run python benchmark/serve.py \
-    --model-path Qwen/Qwen3-4B-Instruct-2507 \
-    --dp 1 \
-    --port 62726 \
-    --disable-cuda-graph \
-    --disable-regex-jump-forward \
-    --disable-radix-cache \
-    --max-running-requests 1 \
-    --mem-fraction-static 0.85 \
-    --context-length 1048576 \
-    --sgl-conf-file config/qwen-token-retrieval.yaml &
+VLLM_PORT=8000
+uv run python -m vllm.entrypoints.openai.api_server \
+    --model Qwen/Qwen3-4B-Instruct-2507 \
+    --host 127.0.0.1 \
+    --port "$VLLM_PORT" \
+    --gpu-memory-utilization 0.85 \
+    --max-model-len 1048576 &
 
 cd ..
 echo ">>> Waiting for benchmark server to be ready..."
-until curl -s http://127.0.0.1:62726/health > /dev/null 2>&1; do
+until curl -s http://127.0.0.1:$VLLM_PORT/health > /dev/null 2>&1; do
     echo "... not ready yet, retrying in 10s"
     sleep 10
 done
@@ -50,7 +46,7 @@ echo ">>> Server is up!"
 cd ace/
 
 echo ">>> 5. Configure local endpoint for ACE..."
-export SGLANG_BASE_URL=http://127.0.0.1:62726
+export VLLM_BASE_URL=http://127.0.0.1:5000/v1
 export LLM_RETRIES_ON_TIMEOUT=8
 export LLM_RETRY_SLEEP_SECONDS=3
 export LLM_REQUEST_TIMEOUT_SECONDS=180
@@ -58,9 +54,8 @@ export LLM_REQUEST_TIMEOUT_SECONDS=180
 echo ">>> 6. Run evaluation..."
 uv run python -m eval.finance.run \
     --task_name finer_0.5 \
-    --mode offline \
+    --mode eval_only \
     --save_path results \
-    --api_provider vllm \
     --api_provider vllm \
     --use_adversarial \
     --adversarial_mode legacy \
@@ -79,6 +74,7 @@ uv run python -m eval.finance.run \
     --test_workers 5 \
     --seed 42 \
     --eval_steps 50 \
-    --save_steps 25
+    --save_steps 25 \
+    --initial_playbook_path /data/experiment/ace/results/ace_run_20260801_155800_finer_0.5_offline/final_playbook.txt
 
 echo ">>> Done!"
