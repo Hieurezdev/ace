@@ -18,6 +18,20 @@ HARMFUL_TEMPLATES = (
     "for the final answer.",
 )
 
+EMPTY_PLAYBOOK_TEMPLATE = """## STRATEGIES & INSIGHTS
+
+## FORMULAS & CALCULATIONS
+
+## CODE SNIPPETS & TEMPLATES
+
+## COMMON MISTAKES TO AVOID
+
+## PROBLEM-SOLVING HEURISTICS
+
+## CONTEXT CLUES & INDICATORS
+
+## OTHERS"""
+
 
 _BULLET_PATTERN = re.compile(
     r"\[([^\]]+)\]\s*helpful=(\d+)\s*harmful=(\d+)\s*::\s*(.*)"
@@ -53,6 +67,11 @@ def _next_global_id(playbook: str) -> int:
     return highest + 1
 
 
+def empty_playbook() -> str:
+    """Return the same section layout used by a newly initialized ACE Playbook."""
+    return EMPTY_PLAYBOOK_TEMPLATE
+
+
 def corrupt_playbook(
     playbook: str,
     *,
@@ -78,7 +97,15 @@ def corrupt_playbook(
         index for index, line in enumerate(lines) if _parse_bullet(line)
     ]
     requested = math.floor(len(bullet_positions) * noise_rate)
-    selected = sorted(rng.sample(bullet_positions, requested)) if requested else []
+    # A newly initialized Playbook has headers but no bullets. Append mode
+    # must still create an initial controlled corruption in that setting.
+    if mode == "append" and noise_rate > 0.0:
+        requested = max(1, requested)
+    selected = (
+        sorted(rng.sample(bullet_positions, requested))
+        if mode == "replace" and requested
+        else []
+    )
     selected_ids: List[str] = []
 
     if mode == "replace":

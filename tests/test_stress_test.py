@@ -37,6 +37,17 @@ class StressTestTests(unittest.TestCase):
         self.assertEqual(corrupted.count("helpful="), 6)
         self.assertIn("[stress-00004]", corrupted)
 
+    def test_append_injects_into_a_new_empty_playbook(self):
+        corrupted, manifest = stress_test_module.corrupt_playbook(
+            stress_test_module.empty_playbook(),
+            noise_rate=0.02,
+            mode="append",
+            seed=42,
+        )
+        self.assertEqual(manifest["original_bullets"], 0)
+        self.assertEqual(manifest["harmful_bullets"], 1)
+        self.assertIn("[stress-00001]", corrupted)
+
 
 if __name__ == "__main__":
     unittest.main()

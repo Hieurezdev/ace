@@ -12,7 +12,7 @@ from datetime import datetime
 from .data_processor import DataProcessor
 
 from ace import ACE
-from ace.core.stress_test import write_corrupted_playbook
+from ace.core.stress_test import empty_playbook, write_corrupted_playbook
 from utils import initialize_clients, set_global_seed
 
 def parse_args():
@@ -279,12 +279,17 @@ def main():
             "--stress_inject_interval must be positive when "
             "--stress_noise_schedule is interval or both"
         )
-    if args.stress_noise_rate and not args.initial_playbook_path:
-        raise ValueError("--stress_noise_rate requires --initial_playbook_path")
         
     # Load initial playbook (or use empty if None provided)
     initial_playbook = load_initial_playbook(args.initial_playbook_path)
     if args.stress_noise_rate and args.stress_noise_schedule in {"initial", "both"}:
+        if not initial_playbook:
+            if args.stress_noise_mode == "replace":
+                raise ValueError(
+                    "--stress_noise_mode replace requires --initial_playbook_path; "
+                    "use append to inject into a newly initialized Playbook"
+                )
+            initial_playbook = empty_playbook()
         if not initial_playbook:
             raise ValueError("--initial_playbook_path did not contain a Playbook")
         stress_seed = args.seed if args.stress_noise_seed is None else args.stress_noise_seed
