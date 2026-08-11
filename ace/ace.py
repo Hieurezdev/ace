@@ -15,6 +15,7 @@ from typing import Dict, List, Tuple, Optional, Any
 
 from .core import Generator, Reflector, Curator, BulletpointAnalyzer, PlaybookRetriever, FailureMemoryBank
 from .core import AdversarialAgent
+from .core.stress_test import corrupt_playbook
 from playbook_utils import *
 from logger import *
 from utils import *
@@ -223,6 +224,11 @@ class ACE:
             'use_failure_memory': config.get('use_failure_memory', False),
             'failure_memory_top_k': config.get('failure_memory_top_k', 3),
             'failure_memory_mode': config.get('failure_memory_mode', 'legacy'),
+            'stress_noise_rate': config.get('stress_noise_rate', 0.0),
+            'stress_noise_mode': config.get('stress_noise_mode', 'replace'),
+            'stress_noise_seed': config.get('stress_noise_seed'),
+            'stress_noise_schedule': config.get('stress_noise_schedule', 'initial'),
+            'stress_inject_interval': config.get('stress_inject_interval', 0),
             'use_adversarial': config.get('use_adversarial', False),
             'adversarial_frequency': config.get('adversarial_frequency', 10),
             'adversarial_num_candidates': config.get('adversarial_num_candidates', 5),
@@ -230,6 +236,56 @@ class ACE:
             'adversarial_verifier_max_ambiguity': config.get('adversarial_verifier_max_ambiguity', 0.20),
             'adversarial_mode': config.get('adversarial_mode', 'verified'),
         }
+
+    def _inject_interval_stress_noise(
+        self,
+        *,
+        epoch: int,
+        step: int,
+        config_params: Dict[str, Any],
+        log_dir: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Inject deterministic harmful noise into the in-memory Playbook only."""
+        schedule = config_params['stress_noise_schedule']
+        interval = int(config_params['stress_inject_interval'])
+        noise_rate = float(config_params['stress_noise_rate'])
+        if (
+            noise_rate <= 0.0
+            or schedule not in {'interval', 'both'}
+            or interval <= 0
+            or step % interval != 0
+        ):
+            return None
+
+        base_seed = config_params['stress_noise_seed']
+        if base_seed is None:
+            base_seed = 42
+        injection_seed = int(base_seed) + epoch * 1_000_000 + step
+        self.playbook, manifest = corrupt_playbook(
+            self.playbook,
+            noise_rate=noise_rate,
+            mode=config_params['stress_noise_mode'],
+            seed=injection_seed,
+        )
+        manifest.update(
+            {
+                'epoch': epoch,
+                'step': step,
+                'schedule': schedule,
+                'injection_seed': injection_seed,
+            }
+        )
+        event_path = os.path.join(log_dir, 'playbook_stress_events.jsonl')
+        with open(event_path, 'a', encoding='utf-8') as file:
+            file.write(json.dumps(manifest, ensure_ascii=False) + '\n')
+        if self.use_rae and self.playbook_retriever:
+            self.playbook_retriever.update_index(self.playbook)
+        print(
+            '⚠️  Injected interval stress noise: '
+            f"epoch={epoch}, step={step}, rate={manifest['noise_rate_realized']:.3f}, "
+            f"mode={manifest['mode']}"
+        )
+        return manifest
     
     def _setup_paths(
         self,
@@ -1227,6 +1283,12 @@ class ACE:
             
             for step, task_dict in enumerate(train_samples_to_run, start=resume_from_step):
                 print(f"\n--- Step {step}/{len(train_samples)} ---")
+                self._inject_interval_stress_noise(
+                    epoch=epoch,
+                    step=(epoch - 1) * len(train_samples) + step,
+                    config_params=config_params,
+                    log_dir=log_dir,
+                )
                 
                 target = task_dict.get("target", "")
                 

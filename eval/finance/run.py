@@ -145,6 +145,18 @@ def parse_args():
         "--stress_noise_seed", type=int, default=None,
         help="Seed for selecting corrupted bullets; defaults to --seed.",
     )
+    parser.add_argument(
+        "--stress_noise_schedule", choices=["initial", "interval", "both"], default="initial",
+        help="Inject only before training, at fixed training intervals, or both.",
+    )
+    parser.add_argument(
+        "--stress_inject_interval", type=int, default=0,
+        help="Inject stress noise every N global offline-training steps when schedule is interval/both.",
+    )
+    parser.add_argument(
+        "--max_train_samples", type=int, default=None,
+        help="Limit offline training to the first N processed samples; useful for controlled pilots.",
+    )
     
     return parser.parse_args()
 
@@ -255,12 +267,26 @@ def main():
         task_config[args.task_name],
         args.mode
     )
+    if args.max_train_samples is not None:
+        if args.max_train_samples <= 0:
+            raise ValueError("--max_train_samples must be positive")
+        if args.mode != "offline":
+            raise ValueError("--max_train_samples is supported only in offline mode")
+        train_samples = train_samples[:args.max_train_samples]
+        print(f"Limiting offline training to {len(train_samples)} samples")
+    if args.stress_noise_schedule in {"interval", "both"} and args.stress_inject_interval <= 0:
+        raise ValueError(
+            "--stress_inject_interval must be positive when "
+            "--stress_noise_schedule is interval or both"
+        )
+    if args.stress_noise_rate and not args.initial_playbook_path:
+        raise ValueError("--stress_noise_rate requires --initial_playbook_path")
         
     # Load initial playbook (or use empty if None provided)
     initial_playbook = load_initial_playbook(args.initial_playbook_path)
-    if args.stress_noise_rate:
+    if args.stress_noise_rate and args.stress_noise_schedule in {"initial", "both"}:
         if not initial_playbook:
-            raise ValueError("--stress_noise_rate requires --initial_playbook_path")
+            raise ValueError("--initial_playbook_path did not contain a Playbook")
         stress_seed = args.seed if args.stress_noise_seed is None else args.stress_noise_seed
         initial_playbook, stress_manifest = write_corrupted_playbook(
             initial_playbook,
@@ -324,6 +350,9 @@ def main():
         'stress_noise_rate': args.stress_noise_rate,
         'stress_noise_mode': args.stress_noise_mode,
         'stress_noise_seed': args.stress_noise_seed,
+        'stress_noise_schedule': args.stress_noise_schedule,
+        'stress_inject_interval': args.stress_inject_interval,
+        'max_train_samples': args.max_train_samples,
         'use_bulletpoint_analyzer': args.use_bulletpoint_analyzer,
         'bulletpoint_analyzer_threshold': args.bulletpoint_analyzer_threshold,
         'use_rae': args.use_rae,
