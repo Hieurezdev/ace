@@ -12,6 +12,7 @@ from datetime import datetime
 from .data_processor import DataProcessor
 
 from ace import ACE
+from ace.core.stress_test import write_corrupted_playbook
 from utils import initialize_clients, set_global_seed
 
 def parse_args():
@@ -129,6 +130,21 @@ def parse_args():
                         help="Directory to save results")
     parser.add_argument("--seed", type=int, default=42,
                         help="Random seed for reproducibility")
+    parser.add_argument(
+        "--stress_noise_rate", type=float, default=0.0,
+        help=(
+            "Inject this fraction of controlled harmful Playbook bullets into an "
+            "isolated stress-test clone. Set 0 to disable (default)."
+        ),
+    )
+    parser.add_argument(
+        "--stress_noise_mode", choices=["replace", "append"], default="replace",
+        help="replace keeps Playbook length fixed; append adds harmful distractors.",
+    )
+    parser.add_argument(
+        "--stress_noise_seed", type=int, default=None,
+        help="Seed for selecting corrupted bullets; defaults to --seed.",
+    )
     
     return parser.parse_args()
 
@@ -242,6 +258,23 @@ def main():
         
     # Load initial playbook (or use empty if None provided)
     initial_playbook = load_initial_playbook(args.initial_playbook_path)
+    if args.stress_noise_rate:
+        if not initial_playbook:
+            raise ValueError("--stress_noise_rate requires --initial_playbook_path")
+        stress_seed = args.seed if args.stress_noise_seed is None else args.stress_noise_seed
+        initial_playbook, stress_manifest = write_corrupted_playbook(
+            initial_playbook,
+            os.path.join(args.save_path, "stress_test_inputs"),
+            noise_rate=args.stress_noise_rate,
+            mode=args.stress_noise_mode,
+            seed=stress_seed,
+        )
+        print(
+            "✓ Stress test enabled: "
+            f"mode={stress_manifest['mode']}, "
+            f"rate={stress_manifest['noise_rate_realized']:.3f}, "
+            f"clone={stress_manifest['playbook_path']}"
+        )
     if initial_playbook:
         print(f"Loaded initial playbook from {args.initial_playbook_path}\n")
     else:
@@ -288,6 +321,9 @@ def main():
         'save_dir': args.save_path,
         'test_workers': args.test_workers,
         'initial_playbook_path': args.initial_playbook_path,
+        'stress_noise_rate': args.stress_noise_rate,
+        'stress_noise_mode': args.stress_noise_mode,
+        'stress_noise_seed': args.stress_noise_seed,
         'use_bulletpoint_analyzer': args.use_bulletpoint_analyzer,
         'bulletpoint_analyzer_threshold': args.bulletpoint_analyzer_threshold,
         'use_rae': args.use_rae,
