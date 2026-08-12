@@ -7,6 +7,8 @@ relevant bullets using semantic similarity search (BGE-M3 + FAISS).
 """
 
 import re
+import hashlib
+import random
 import numpy as np
 from typing import List, Dict, Tuple, Any, Optional
 
@@ -75,6 +77,8 @@ class PlaybookRetriever:
         embedding_model_name: str = 'BAAI/bge-m3',
         embedding_dim: int = 1024,
         top_k: int = 10,
+        retrieval_mode: str = "semantic",
+        random_seed: int = 42,
     ):
         """
         Initialize the PlaybookRetriever.
@@ -85,10 +89,17 @@ class PlaybookRetriever:
             embedding_dim: Dimensionality of the embedding vectors.
                            Must match the chosen model (bge-m3 → 1024).
             top_k: Default number of bullets to retrieve.
+            retrieval_mode: ``semantic`` for BGE-M3/FAISS retrieval or
+                ``random`` for a length-matched random Top-K control.
+            random_seed: Base seed for deterministic random retrieval.
         """
         self.embedding_model_name = embedding_model_name
         self.embedding_dim = embedding_dim
         self.default_top_k = top_k
+        if retrieval_mode not in {"semantic", "random"}:
+            raise ValueError("retrieval_mode must be 'semantic' or 'random'")
+        self.retrieval_mode = retrieval_mode
+        self.random_seed = random_seed
 
         # Lazy-loaded embedding model
         self._embedding_model: Optional[Any] = None
@@ -99,7 +110,7 @@ class PlaybookRetriever:
         self._section_headers: List[str] = []   # kept to wrap output playbook
         self._raw_playbook: str = ""
 
-        if not RAE_AVAILABLE:
+        if not RAE_AVAILABLE and retrieval_mode == "semantic":
             print("⚠️  PlaybookRetriever initialized but dependencies not available — "
                   "will fall back to full playbook.")
 
@@ -170,12 +181,18 @@ class PlaybookRetriever:
         Args:
             playbook: Full playbook string (may have hundreds of bullets).
         """
-        if not RAE_AVAILABLE:
-            self._raw_playbook = playbook
-            return
-
         self._raw_playbook = playbook
         self._section_headers, self._bullets = self._parse_playbook(playbook)
+
+        # Random Top-K is an ablation control: it deliberately avoids loading
+        # an embedding model and only needs the parsed Playbook bullets.
+        if self.retrieval_mode == "random":
+            self._index = None
+            print(f"[RAE-Random] Loaded {len(self._bullets)} bullets (top_k={self.default_top_k})")
+            return
+
+        if not RAE_AVAILABLE:
+            return
 
         if len(self._bullets) == 0:
             self._index = None
@@ -212,7 +229,7 @@ class PlaybookRetriever:
         k = top_k if top_k is not None else self.default_top_k
 
         # Fallback conditions
-        if not RAE_AVAILABLE or self._index is None or len(self._bullets) == 0:
+        if len(self._bullets) == 0:
             return self._raw_playbook
 
         num_bullets = len(self._bullets)
@@ -220,16 +237,22 @@ class PlaybookRetriever:
             # No need to filter — return full playbook as-is
             return self._raw_playbook
 
-        # Encode query
-        query_emb = self._encode([query])  # (1, dim)
-
-        # Search
         actual_k = min(k, num_bullets)
-        scores, indices = self._index.search(query_emb, actual_k)
-        retrieved_indices = set(indices[0].tolist())
-
-        print(f"[RAE] Retrieved {len(retrieved_indices)}/{num_bullets} bullets "
-              f"(top_k={k}) | top score={scores[0][0]:.4f}")
+        if self.retrieval_mode == "random":
+            # Stable across processes and independent of thread scheduling.
+            query_hash = int(hashlib.sha256(query.encode("utf-8")).hexdigest()[:16], 16)
+            rng = random.Random(self.random_seed + query_hash)
+            selected_indices = sorted(rng.sample(range(num_bullets), actual_k))
+            retrieved_indices = set(selected_indices)
+            print(f"[RAE-Random] Retrieved {len(retrieved_indices)}/{num_bullets} bullets (top_k={k})")
+        else:
+            if not RAE_AVAILABLE or self._index is None:
+                return self._raw_playbook
+            query_emb = self._encode([query])  # (1, dim)
+            scores, indices = self._index.search(query_emb, actual_k)
+            retrieved_indices = set(indices[0].tolist())
+            print(f"[RAE] Retrieved {len(retrieved_indices)}/{num_bullets} bullets "
+                  f"(top_k={k}) | top score={scores[0][0]:.4f}")
 
         # Rebuild a focused playbook string:
         # Keep all section headers + only retrieved bullets
@@ -257,6 +280,8 @@ class PlaybookRetriever:
     @property
     def is_available(self) -> bool:
         """True if RAE dependencies are installed and index has been built."""
+        if self.retrieval_mode == "random":
+            return len(self._bullets) > 0
         return RAE_AVAILABLE and self._index is not None
 
     @property

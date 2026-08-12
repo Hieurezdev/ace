@@ -44,6 +44,8 @@ class ACE:
         bulletpoint_analyzer_threshold: float = 0.90,
         use_rae: bool = False,
         rae_top_k: int = 10,
+        rae_retrieval_mode: str = "semantic",
+        rae_random_seed: int = 42,
         use_failure_memory: bool = False,
         failure_memory_top_k: int = 3,
         failure_memory_mode: str = "legacy",
@@ -69,6 +71,9 @@ class ACE:
             bulletpoint_analyzer_threshold: Similarity threshold for bulletpoint analyzer (0-1)
             use_rae: Enable Retrieval-Augmented Execution at the Generator (Top-K bullet retrieval)
             rae_top_k: Number of Top-K bullets to retrieve per query when RAE is enabled
+            rae_retrieval_mode: ``semantic`` retrieval or the deterministic
+                                ``random`` Top-K ablation control.
+            rae_random_seed: Seed for the random Top-K ablation control.
             use_failure_memory: Enable Analogical Reflection — retrieve similar past failures
                                 at reflection time to enrich the Reflector's analysis.
                                 Shares the BGE-M3 embedding model with RAE when both are enabled.
@@ -112,9 +117,11 @@ class ACE:
             self.playbook_retriever = PlaybookRetriever(
                 embedding_model_name='BAAI/bge-m3',
                 embedding_dim=1024,
-                top_k=rae_top_k
+                top_k=rae_top_k,
+                retrieval_mode=rae_retrieval_mode,
+                random_seed=rae_random_seed,
             )
-            print(f"✓ PlaybookRetriever (RAE) initialized (top_k={rae_top_k}, model=BAAI/bge-m3)")
+            print(f"✓ PlaybookRetriever (mode={rae_retrieval_mode}, top_k={rae_top_k}) initialized")
         else:
             self.playbook_retriever = None
         
@@ -222,6 +229,8 @@ class ACE:
             'bulletpoint_analyzer_threshold': config.get('bulletpoint_analyzer_threshold', 0.90),
             'use_rae': config.get('use_rae', False),
             'rae_top_k': config.get('rae_top_k', 10),
+            'rae_retrieval_mode': config.get('rae_retrieval_mode', 'semantic'),
+            'rae_random_seed': config.get('rae_random_seed', 42),
             'use_failure_memory': config.get('use_failure_memory', False),
             'failure_memory_top_k': config.get('failure_memory_top_k', 3),
             'failure_memory_mode': config.get('failure_memory_mode', 'legacy'),

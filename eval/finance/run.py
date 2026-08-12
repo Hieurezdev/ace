@@ -84,9 +84,13 @@ def parse_args():
                         help="Similarity threshold for bulletpoint analyzer (0-1, default: 0.90)")
 
     # RAE configuration
-    parser.add_argument("--use_rae", action="store_true",
-                        help="Enable Retrieval-Augmented Execution at the Generator "
-                             "(retrieves Top-K relevant bullets per query via BGE-M3 + FAISS)")
+    rae_group = parser.add_mutually_exclusive_group()
+    rae_group.add_argument("--use_rae", action="store_true",
+                           help="Enable semantic Retrieval-Augmented Execution at the Generator "
+                                "(Top-K via BGE-M3 + FAISS)")
+    rae_group.add_argument("--use_random_rae", action="store_true",
+                           help="Eval-only random Top-K control; selects the same number of Playbook bullets "
+                                "without semantic retrieval")
     parser.add_argument("--rae_top_k", type=int, default=10,
                         help="Number of Top-K bullets to retrieve per query when RAE is enabled (default: 10)")
 
@@ -251,6 +255,8 @@ def main():
 
     if args.track_generation_latency and args.mode != "eval_only":
         raise ValueError("--track_generation_latency is supported only with --mode eval_only")
+    if args.use_random_rae and args.mode != "eval_only":
+        raise ValueError("--use_random_rae is supported only with --mode eval_only")
 
     set_global_seed(args.seed)
     print(f"Using seed: {args.seed}")
@@ -326,8 +332,10 @@ def main():
         initial_playbook=initial_playbook,
         use_bulletpoint_analyzer=args.use_bulletpoint_analyzer,
         bulletpoint_analyzer_threshold=args.bulletpoint_analyzer_threshold,
-        use_rae=args.use_rae,
+        use_rae=(args.use_rae or args.use_random_rae),
         rae_top_k=args.rae_top_k,
+        rae_retrieval_mode=("random" if args.use_random_rae else "semantic"),
+        rae_random_seed=args.seed,
         use_failure_memory=(args.use_failure_memory or args.use_verified_failure_memory),
         failure_memory_top_k=args.failure_memory_top_k,
         failure_memory_mode=("verified" if args.use_verified_failure_memory else "legacy"),
@@ -366,8 +374,10 @@ def main():
         'max_train_samples': args.max_train_samples,
         'use_bulletpoint_analyzer': args.use_bulletpoint_analyzer,
         'bulletpoint_analyzer_threshold': args.bulletpoint_analyzer_threshold,
-        'use_rae': args.use_rae,
+        'use_rae': (args.use_rae or args.use_random_rae),
         'rae_top_k': args.rae_top_k,
+        'rae_retrieval_mode': ("random" if args.use_random_rae else "semantic"),
+        'rae_random_seed': args.seed,
         'use_failure_memory': (args.use_failure_memory or args.use_verified_failure_memory),
         'failure_memory_top_k': args.failure_memory_top_k,
         'failure_memory_mode': ("verified" if args.use_verified_failure_memory else "legacy"),
