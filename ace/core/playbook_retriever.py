@@ -257,7 +257,6 @@ class PlaybookRetriever:
         # Rebuild a focused playbook string:
         # Keep all section headers + only retrieved bullets
         focused_lines: List[str] = []
-        bullet_rank = {idx: rank for rank, idx in enumerate(indices[0].tolist())}
 
         # We want to preserve section structure, so walk the original playbook
         bullet_global_idx = 0
