@@ -68,6 +68,8 @@ def parse_args():
                         help="Total token budget for playbook")
     parser.add_argument("--test_workers", type=int, default=20,
                         help="Number of parallel workers for testing")
+    parser.add_argument("--track_generation_latency", action="store_true",
+                        help="In eval_only mode, stream Generator calls and save average TTFT/TPOT metrics")
     
     # Prompt configuration
     parser.add_argument("--json_mode", action="store_true",
@@ -247,6 +249,9 @@ def main():
     """Main execution function."""
     args = parse_args()
 
+    if args.track_generation_latency and args.mode != "eval_only":
+        raise ValueError("--track_generation_latency is supported only with --mode eval_only")
+
     set_global_seed(args.seed)
     print(f"Using seed: {args.seed}")
     
@@ -351,6 +356,7 @@ def main():
         'no_ground_truth': args.no_ground_truth,
         'save_dir': args.save_path,
         'test_workers': args.test_workers,
+        'track_generation_latency': args.track_generation_latency,
         'initial_playbook_path': args.initial_playbook_path,
         'stress_noise_rate': args.stress_noise_rate,
         'stress_noise_mode': args.stress_noise_mode,

@@ -190,10 +190,12 @@ def evaluate_single_test_sample(args_tuple, data_processor) -> Tuple[Dict, str]:
 
     Args:
         args_tuple: Tuple of (index, task_dict, generator, playbook, max_tokens,
-                             log_dir, use_json_mode, retriever)
+                             log_dir, use_json_mode, retriever,
+                             measure_generation_latency)
         data_processor: DataProcessor instance with answer_is_correct method
     """
-    (i, task_dict, generator, playbook, max_tokens, log_dir, use_json_mode, retriever) = args_tuple
+    (i, task_dict, generator, playbook, max_tokens, log_dir, use_json_mode,
+     retriever, measure_generation_latency) = args_tuple
     try:
         context = task_dict["context"]
         question = task_dict["question"]
@@ -207,7 +209,8 @@ def evaluate_single_test_sample(args_tuple, data_processor) -> Tuple[Dict, str]:
             use_json_mode=use_json_mode,
             call_id=f"test_eval_{i}",
             log_dir=log_dir,
-            retriever=retriever
+            retriever=retriever,
+            measure_generation_latency=measure_generation_latency,
         )
 
         final_answer = extract_answer(gen_response)
@@ -218,7 +221,13 @@ def evaluate_single_test_sample(args_tuple, data_processor) -> Tuple[Dict, str]:
             "final_answer": final_answer,
             "target": target,
             "is_correct": is_correct,
-            "success": True
+            "success": True,
+            "latency": {
+                "ttft_seconds": call_info.get("ttft_seconds"),
+                "tpot_seconds": call_info.get("tpot_seconds"),
+                "total_time_seconds": call_info.get("total_time"),
+                "response_tokens": call_info.get("response_num_tokens"),
+            } if measure_generation_latency else None,
         }, None
 
     except Exception as e:
@@ -227,7 +236,8 @@ def evaluate_single_test_sample(args_tuple, data_processor) -> Tuple[Dict, str]:
 
 def evaluate_test_set(data_processor, generator, playbook, test_samples,
                       max_tokens=4096, log_dir=None, max_workers=20,
-                      use_json_mode=False, retriever=None) -> Tuple[Dict, Dict]:
+                      use_json_mode=False, retriever=None,
+                      measure_generation_latency=False) -> Tuple[Dict, Dict]:
     """
     Parallel evaluation of test set - task-agnostic implementation.
 
@@ -241,6 +251,8 @@ def evaluate_test_set(data_processor, generator, playbook, test_samples,
         max_workers: Number of parallel workers
         use_json_mode: Whether to use JSON mode
         retriever: Optional PlaybookRetriever for RAE (Top-K bullet retrieval at generation time)
+        measure_generation_latency: Measure per-request TTFT and TPOT using
+            streaming, then report their averages.
 
     Returns:
         Tuple of (results_dict, error_logs_dict)
@@ -250,7 +262,8 @@ def evaluate_test_set(data_processor, generator, playbook, test_samples,
     print(f"{'='*40}")
 
     args_list = [
-        (i, sample, generator, playbook, max_tokens, log_dir, use_json_mode, retriever)
+        (i, sample, generator, playbook, max_tokens, log_dir, use_json_mode,
+         retriever, measure_generation_latency)
         for i, sample in enumerate(test_samples)
     ]
 
@@ -258,6 +271,7 @@ def evaluate_test_set(data_processor, generator, playbook, test_samples,
         "correct": 0, "total": 0, "no_answer": 0,
         "answers": [], "targets": [], "errors": []
     }
+    latency_samples = []
 
     # Use a wrapper to pass data_processor to the evaluation function
     def eval_wrapper(args_tuple):
@@ -281,6 +295,8 @@ def evaluate_test_set(data_processor, generator, playbook, test_samples,
                 results["total"] += 1
                 results["answers"].append(result["final_answer"])
                 results["targets"].append(result["target"])
+                if measure_generation_latency and result.get("latency"):
+                    latency_samples.append(result["latency"])
                 
                 if not result["is_correct"]:
                     results["errors"].append({
@@ -305,6 +321,27 @@ def evaluate_test_set(data_processor, generator, playbook, test_samples,
             "total": results["total"],
             "no_answer": results["no_answer"]
         }
+        if measure_generation_latency:
+            def _mean_metric(name):
+                values = [item[name] for item in latency_samples if item.get(name) is not None]
+                return float(np.mean(values)) if values else None
+
+            latency_summary = {
+                "measurement": "streaming_per_request",
+                "samples": len(latency_samples),
+                "ttft_samples": sum(item.get("ttft_seconds") is not None for item in latency_samples),
+                "tpot_samples": sum(item.get("tpot_seconds") is not None for item in latency_samples),
+                "avg_ttft_seconds": _mean_metric("ttft_seconds"),
+                "avg_tpot_seconds": _mean_metric("tpot_seconds"),
+                "avg_total_time_seconds": _mean_metric("total_time_seconds"),
+                "avg_response_tokens": _mean_metric("response_tokens"),
+            }
+            final_results["generation_latency"] = latency_summary
+            print(
+                "📈 Generation latency: "
+                f"avg TTFT={latency_summary['avg_ttft_seconds']}s, "
+                f"avg TPOT={latency_summary['avg_tpot_seconds']}s"
+            )
         
         error_logs = {
             "accuracy": accuracy,

@@ -16,7 +16,8 @@ import openai
 from logger import log_llm_call, log_problematic_request
 
 def timed_llm_call(client, api_provider, model, prompt, role, call_id, max_tokens=4096, log_dir=None,
-                   sleep_seconds=None, retries_on_timeout=None, attempt=1, use_json_mode=False):
+                   sleep_seconds=None, retries_on_timeout=None, attempt=1, use_json_mode=False,
+                   measure_generation_latency=False):
     """
     Make a timed LLM call with error handling and retry logic.
     
@@ -40,6 +41,8 @@ def timed_llm_call(client, api_provider, model, prompt, role, call_id, max_token
         retries_on_timeout: Maximum number of retries for timeouts/rate limits/empty responses
         attempt: Current attempt number (for recursive calls)
         use_json_mode: Whether to use JSON mode for structured output
+        measure_generation_latency: Stream the response and record TTFT and
+            TPOT. Intended for controlled eval-only latency measurements.
     
     Returns:
         tuple: (response_text, call_info_dict)
@@ -56,6 +59,12 @@ def timed_llm_call(client, api_provider, model, prompt, role, call_id, max_token
         retries_on_timeout = int(os.getenv("LLM_RETRIES_ON_TIMEOUT", "8"))
     
     print(f"[{role.upper()}] Starting call {call_id}...")
+
+    if measure_generation_latency and api_provider == "sglang":
+        raise ValueError(
+            "TTFT/TPOT tracking currently requires an OpenAI-compatible "
+            "streaming provider such as vLLM; SGLang is not supported."
+        )
     
     # Check if we're using API key mixer for dynamic key rotation on retries
     using_key_mixer = False
@@ -139,16 +148,50 @@ def timed_llm_call(client, api_provider, model, prompt, role, call_id, max_token
             if use_json_mode:
                 api_params["response_format"] = {"type": "json_object"}
             call_start = time.time()
-            response = active_client.chat.completions.create(**api_params)
-            call_end = time.time()
-            
-            # Check if response is valid
-            if not response or not response.choices or len(response.choices) == 0:
-                raise Exception("Empty response from API")
+            if measure_generation_latency:
+                # Non-streaming responses arrive only after generation has
+                # finished, so they cannot expose a real time-to-first-token.
+                stream = active_client.chat.completions.create(
+                    **api_params,
+                    stream=True,
+                    stream_options={"include_usage": True},
+                )
+                response_parts = []
+                first_token_time = None
+                usage = None
+                for chunk in stream:
+                    if getattr(chunk, "usage", None) is not None:
+                        usage = chunk.usage
+                    choices = getattr(chunk, "choices", None) or []
+                    if not choices:
+                        continue
+                    delta = getattr(choices[0], "delta", None)
+                    content = getattr(delta, "content", None) if delta is not None else None
+                    if content:
+                        if first_token_time is None:
+                            first_token_time = time.time()
+                        response_parts.append(content)
+                call_end = time.time()
+                response_content = "".join(response_parts)
+                prompt_tokens = getattr(usage, "prompt_tokens", None)
+                completion_tokens = getattr(usage, "completion_tokens", None)
+                ttft_seconds = first_token_time - call_start if first_token_time else None
+                tpot_seconds = None
+                if first_token_time is not None and completion_tokens and completion_tokens > 1:
+                    tpot_seconds = (call_end - first_token_time) / (completion_tokens - 1)
+            else:
+                response = active_client.chat.completions.create(**api_params)
+                call_end = time.time()
+                if not response or not response.choices or len(response.choices) == 0:
+                    raise Exception("Empty response from API")
+                response_content = response.choices[0].message.content
+                prompt_tokens = response.usage.prompt_tokens if response.usage else None
+                completion_tokens = response.usage.completion_tokens if response.usage else None
+                ttft_seconds = None
+                tpot_seconds = None
             
             response_time = time.time()
             total_time = response_time - start_time
-            response_content = response.choices[0].message.content
             
             if response_content is None:
                 raise Exception("API returned None content")
@@ -165,8 +208,11 @@ def timed_llm_call(client, api_provider, model, prompt, role, call_id, max_token
                 "call_time": call_end - call_start,
                 "prompt_length": len(prompt),
                 "response_length": len(response_content),
-                "prompt_num_tokens": response.usage.prompt_tokens,
-                "response_num_tokens": response.usage.completion_tokens,
+                "prompt_num_tokens": prompt_tokens,
+                "response_num_tokens": completion_tokens,
+                "ttft_seconds": ttft_seconds,
+                "tpot_seconds": tpot_seconds,
+                "latency_measurement": "streaming" if measure_generation_latency else None,
             }
             
             print(f"[{role.upper()}] Call {call_id} completed in {total_time:.2f}s")

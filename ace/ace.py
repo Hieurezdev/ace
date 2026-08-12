@@ -217,6 +217,7 @@ class ACE:
             'no_ground_truth': config.get('no_ground_truth', False),
             'save_dir': config.get('save_dir', './results'),
             'test_workers': config.get('test_workers', 20),
+            'track_generation_latency': config.get('track_generation_latency', False),
             'use_bulletpoint_analyzer': config.get('use_bulletpoint_analyzer', False),
             'bulletpoint_analyzer_threshold': config.get('bulletpoint_analyzer_threshold', 0.90),
             'use_rae': config.get('use_rae', False),
@@ -577,6 +578,7 @@ class ACE:
         config_params = self._extract_config_params(config)
         use_json_mode = config_params['use_json_mode']
         test_workers = config_params['test_workers']
+        measure_generation_latency = config_params['track_generation_latency']
         
         test_results, test_error_log = evaluate_test_set(
             data_processor,
@@ -587,7 +589,8 @@ class ACE:
             log_dir,
             max_workers=test_workers,
             use_json_mode=use_json_mode,
-            retriever=self.playbook_retriever
+            retriever=self.playbook_retriever,
+            measure_generation_latency=measure_generation_latency,
         )
 
         # Save test results

@@ -41,6 +41,7 @@ class Generator:
         call_id: str = "gen",
         log_dir: Optional[str] = None,
         retriever=None,          # Optional[PlaybookRetriever] — avoids circular import
+        measure_generation_latency: bool = False,
     ) -> Tuple[str, List[str], Dict[str, Any]]:
         """
         Generate an answer to a question using the playbook.
@@ -56,6 +57,8 @@ class Generator:
             retriever: Optional PlaybookRetriever. When provided, only the
                        Top-K most relevant bullets are extracted from the
                        playbook and passed to the LLM (RAE mode).
+            measure_generation_latency: Stream this call to measure TTFT and
+                TPOT. Used only by the explicit eval-only latency flag.
 
         Returns:
             Tuple of (full_response, bullet_ids_used, call_info)
@@ -79,7 +82,8 @@ class Generator:
             call_id=call_id,
             max_tokens=self.max_tokens,
             log_dir=log_dir,
-            use_json_mode=use_json_mode
+            use_json_mode=use_json_mode,
+            measure_generation_latency=measure_generation_latency,
         )
 
         # Extract bullet IDs if using retrieval and reason mode
