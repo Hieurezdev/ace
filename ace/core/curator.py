@@ -4,6 +4,7 @@ Manages playbook operations (ADD, UPDATE, MERGE, DELETE).
 """
 
 import json
+import re
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Any
 from ..prompts.curator import (
@@ -35,6 +36,62 @@ class Curator:
         self.api_provider = api_provider
         self.model = model
         self.max_tokens = max_tokens
+
+    @staticmethod
+    def _find_delete_conflict_candidates(playbook: str, limit: int = 12) -> List[Dict[str, Any]]:
+        """Find high-signal formatting-rule contradictions for Curator DELETE audit.
+
+        This is deliberately a candidate miner, not an automatic deletion rule:
+        formatting can depend on the task's output contract. The Curator must
+        use the reflection/ground truth to decide whether either bullet is
+        actually invalid in the overlapping condition.
+        """
+        strict, conditional = [], []
+        pattern = re.compile(
+            r"^\[([^\]]+)\]\s+helpful=(\d+)\s+harmful=(\d+)\s+::\s*(.+)$"
+        )
+        for line in playbook.splitlines():
+            match = pattern.match(line.strip())
+            if not match:
+                continue
+            bullet_id, helpful, harmful, content = match.groups()
+            normalized = content.lower()
+            if "round to the nearest hundredth" not in normalized and "two decimal" not in normalized:
+                continue
+            item = {
+                "id": bullet_id,
+                "helpful": int(helpful),
+                "harmful": int(harmful),
+                "content": content,
+            }
+            if (
+                "exactly two decimal" in normalized
+                or "always format" in normalized
+                or "must always" in normalized
+            ):
+                strict.append(item)
+            if any(marker in normalized for marker in (
+                "minimal decimal", "no decimal padding", "not padded",
+                "not be reported as", "no rounding or decimal padding",
+            )):
+                conditional.append(item)
+
+        candidates = []
+        seen = set()
+        for left in strict:
+            for right in conditional:
+                pair = tuple(sorted((left["id"], right["id"])))
+                if pair in seen:
+                    continue
+                seen.add(pair)
+                candidates.append({
+                    "candidate_type": "formatting_contract_conflict",
+                    "bullet_ids": list(pair),
+                    "bullets": [left, right],
+                })
+                if len(candidates) >= limit:
+                    return candidates
+        return candidates
     
     def curate(
         self,
@@ -77,6 +134,17 @@ class Curator:
         
         allowed_operations = allowed_operations or ["ADD"]
         operation_schema = build_lifecycle_operation_instructions(allowed_operations)
+        delete_candidates = []
+        if "DELETE" in allowed_operations:
+            delete_candidates = self._find_delete_conflict_candidates(current_playbook)
+            if delete_candidates:
+                log_playbook_hygiene(Path(log_dir).parent if log_dir else None, {
+                    "event": "delete_conflict_candidates_found",
+                    "call_id": call_id,
+                    "step": current_step,
+                    "candidate_count": len(delete_candidates),
+                    "candidates": delete_candidates,
+                })
 
         # Select the appropriate prompt
         if use_ground_truth:
@@ -101,6 +169,27 @@ class Curator:
                 question_context=question_context,
                 operation_schema=operation_schema,
             )
+
+        if delete_candidates:
+            audit_pairs = [
+                {
+                    "candidate_type": candidate["candidate_type"],
+                    "bullet_ids": candidate["bullet_ids"],
+                }
+                for candidate in delete_candidates
+            ]
+            prompt += """
+
+**Mandatory DELETE audit:** The following pairs have overlapping formatting
+conditions but opposite output prescriptions. For each pair, compare its scope
+against the current task's output contract and the supplied reflection. If one
+rule is invalid for the overlapping condition, emit a `DELETE` for that exact
+`target_id` with evidence in `reason`; do not add another formatting rule.
+These are candidates only: retain both when their conditions are genuinely
+disjoint or the evidence is insufficient. The full contents are already in
+the Current Playbook; inspect the listed IDs there.
+
+""" + json.dumps(audit_pairs, ensure_ascii=False)
 
         # Make the LLM call
         response, call_info = timed_llm_call(
