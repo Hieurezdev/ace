@@ -104,115 +104,119 @@ def apply_curator_operations(playbook_text, operations, next_id):
     - DELETE: Remove outdated or incorrect bullets (if needed)
     """
     lines = playbook_text.strip().split('\n')
-    
-    # Build section map
-    sections = {}
-    current_section = "general"
-    section_line_map = {}  # Track which line each section header is on
-    
-    for i, line in enumerate(lines):
-        if line.strip().startswith('##'):
-            # Extract section name and normalize it
-            section_header = line.strip()[2:].strip()
-            current_section = section_header.lower().replace(' ', '_').replace('&', 'and')
-            section_line_map[current_section] = i
-            if current_section not in sections:
-                sections[current_section] = []
-        elif line.strip():
-            sections[current_section].append((i, line))
-    
-    # Process operations
-    bullets_to_add = []
-    
-    for op in operations:
-        op_type = op['type']
-        
-        # TODO: Future operation types (not implemented yet)
-        # elif op_type == 'UPDATE':
-        #     bullet_id = op.get('bullet_id', '')
-                    #     new_content = op.get('content', '')
-            #     bullets_to_update[bullet_id] = new_content
-        # elif op_type == 'MERGE':
-        #     source_ids = op.get('source_ids', [])
-        #     bullets_to_delete.update(source_ids)
-        #     # Add merged bullet logic here
-        # elif op_type == 'CREATE_META':
-        #     section_name = op.get('section_name', 'META_STRATEGIES')
-        #     # Add meta section creation logic here
-        
-        if op_type == 'ADD':
-            # Normalize section name from operation
-            section_raw = op.get('section', 'general')
-            section = section_raw.lower().replace(' ', '_').replace('&', 'and')
-            
-            # Check if section exists, if not use 'others'
-            if section not in sections and section != 'general':
-                print(f"Warning: Section '{section_raw}' not found, adding to OTHERS")
-                section = 'others'
-            
-            slug = get_section_slug(section)
-            new_id = f"{slug}-{next_id:05d}"
-            next_id += 1
-            
-            content = op.get('content', '')
-            
-            new_line = format_playbook_line(new_id, 0, 0, content)
-            bullets_to_add.append((section, new_line))
-            print(f"  Added bullet {new_id} to section {section}")
-            
 
-    
-    # Rebuild playbook
-    new_lines = []
+    def normalize_section(value):
+        return value.strip().lower().replace(' ', '_').replace('&', 'and')
+
+    section_by_id, known_sections = {}, set()
+    current_section = 'general'
     for line in lines:
-        parsed = parse_playbook_line(line)
-        if parsed:
-            new_lines.append(line)
-        else:
-            new_lines.append(line)
-    
-    # Add new bullets to appropriate sections
-    final_lines = []
-    current_section = None
-    
-    for line in new_lines:
         if line.strip().startswith('##'):
-            # Before moving to new section, add any bullets for current section
-            if current_section:
-                section_adds = [b for s, b in bullets_to_add if s == current_section]
-                final_lines.extend(section_adds)
-                # Clear added bullets
-                bullets_to_add = [(s, b) for s, b in bullets_to_add if s != current_section]
-            
-            section_header = line.strip()[2:].strip()
-            current_section = section_header.lower().replace(' ', '_').replace('&', 'and')
-        final_lines.append(line)
-    
-    # Add remaining bullets to current section
-    if current_section:
-        section_adds = [b for s, b in bullets_to_add if s == current_section]
-        final_lines.extend(section_adds)
-        bullets_to_add = [(s, b) for s, b in bullets_to_add if s != current_section]
-    
-    # If there are still bullets to add (for sections that don't exist), add them to OTHERS
-    if bullets_to_add:
-        print(f"Warning: {len(bullets_to_add)} bullets have no matching section, adding to OTHERS")
-        others_bullets = [b for s, b in bullets_to_add]
-        # Find OTHERS section
-        others_idx = -1
-        for i, line in enumerate(final_lines):
-            if line.strip() == "## OTHERS":
-                others_idx = i
-                break
-        
-        if others_idx >= 0:
-            # Insert after OTHERS header
-            for i, bullet in enumerate(others_bullets):
-                final_lines.insert(others_idx + 1 + i, bullet)
+            current_section = normalize_section(line.strip()[2:])
+            known_sections.add(current_section)
         else:
-            # Append to end
-            final_lines.extend(others_bullets)
-    
+            parsed = parse_playbook_line(line)
+            if parsed:
+                section_by_id[parsed['id']] = current_section
+
+    updates, deletes, additions, created_sections = {}, set(), [], []
+    active_ids = set(section_by_id)
+    for op in operations:
+        if not isinstance(op, dict):
+            continue
+        op_type = op.get('type', '').upper()
+        if op_type == 'CREATE_META':
+            title = op.get('title') or op.get('section_name') or op.get('section')
+            if title:
+                section = normalize_section(op.get('section_id') or title)
+                if section not in known_sections:
+                    known_sections.add(section)
+                    created_sections.append((section, title))
+            continue
+        if op_type == 'ADD':
+            content = op.get('content', '').strip()
+            if not content:
+                continue
+            section = normalize_section(op.get('section', 'others'))
+            if section not in known_sections:
+                section = 'others'
+            new_id = f"{get_section_slug(section)}-{next_id:05d}"
+            next_id += 1
+            additions.append((section, format_playbook_line(new_id, 0, 0, content)))
+            print(f"  Added bullet {new_id} to section {section}")
+            continue
+        if op_type == 'UPDATE':
+            target_id, content = op.get('target_id', ''), op.get('content', '').strip()
+            if target_id in active_ids and content:
+                updates[target_id] = content
+                print(f"  Updated bullet {target_id}")
+            else:
+                print(f"  Skipped UPDATE: unknown target or empty content ({target_id})")
+            continue
+        if op_type == 'DELETE':
+            target_id = op.get('target_id', '')
+            if target_id in active_ids and op.get('reason', '').strip():
+                deletes.add(target_id)
+                print(f"  Deleted bullet {target_id}")
+            else:
+                print(f"  Skipped DELETE: target missing or reason absent ({target_id})")
+            continue
+        if op_type == 'MERGE':
+            source_ids = list(dict.fromkeys(op.get('source_ids', [])))
+            source_ids = [bullet_id for bullet_id in source_ids if bullet_id in active_ids and bullet_id not in deletes]
+            content = op.get('content', '').strip()
+            if len(source_ids) < 2 or not content:
+                print("  Skipped MERGE: need two valid source IDs and merged content")
+                continue
+            section = normalize_section(op.get('section') or section_by_id[source_ids[0]])
+            if section not in known_sections:
+                section = section_by_id[source_ids[0]]
+            source_stats = []
+            for line in lines:
+                parsed = parse_playbook_line(line)
+                if parsed and parsed['id'] in source_ids:
+                    source_stats.append(parsed)
+            new_id = f"{get_section_slug(section)}-{next_id:05d}"
+            next_id += 1
+            additions.append((section, format_playbook_line(
+                new_id,
+                sum(item['helpful'] for item in source_stats),
+                sum(item['harmful'] for item in source_stats),
+                content,
+            )))
+            deletes.update(source_ids)
+            print(f"  Merged {', '.join(source_ids)} into {new_id}")
+
+    pending = {}
+    for section, line in additions:
+        pending.setdefault(section, []).append(line)
+    final_lines, current_section = [], 'general'
+    for line in lines:
+        if line.strip().startswith('##'):
+            if current_section in pending:
+                final_lines.extend(pending.pop(current_section))
+            current_section = normalize_section(line.strip()[2:])
+            final_lines.append(line)
+            continue
+        parsed = parse_playbook_line(line)
+        if parsed and parsed['id'] in deletes:
+            continue
+        if parsed and parsed['id'] in updates:
+            final_lines.append(format_playbook_line(
+                parsed['id'], parsed['helpful'], parsed['harmful'], updates[parsed['id']]
+            ))
+        else:
+            final_lines.append(line)
+    if current_section in pending:
+        final_lines.extend(pending.pop(current_section))
+    for section, title in created_sections:
+        final_lines.extend(['', f"## {title.upper()}"])
+        final_lines.extend(pending.pop(section, []))
+    if pending:
+        if 'others' not in known_sections:
+            final_lines.extend(['', '## OTHERS'])
+        for section_lines in pending.values():
+            final_lines.extend(section_lines)
     return '\n'.join(final_lines), next_id
 
 def get_playbook_stats(playbook_text):

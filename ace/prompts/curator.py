@@ -128,3 +128,51 @@ Output ONLY a valid JSON object with these exact fields:
 
 ---
 """
+
+
+LIFECYCLE_OPERATION_INSTRUCTIONS = {
+"UPDATE": """
+2. UPDATE: Correct or clarify one existing bullet.
+   - target_id: existing bullet ID
+   - content: complete replacement content
+   - reason: concrete error, ambiguity, or missing condition
+""",
+"DELETE": """
+3. DELETE: Remove a demonstrably harmful, obsolete, or superseded bullet.
+   - target_id: existing bullet ID
+   - reason: evidence-based reason for removal (required)
+   - evidence_failure_ids: optional verified failure IDs
+""",
+"MERGE": """
+4. MERGE: Consolidate two or more redundant or complementary bullets.
+   - source_ids: list of at least two existing bullet IDs
+   - section: destination section
+   - content: complete merged replacement content
+   - reason: why consolidation preserves the useful information
+""",
+"CREATE_META": """
+5. CREATE_META: Create a new organizational section only when the existing
+   taxonomy cannot represent a reusable family of rules.
+   - section_id: stable snake_case identifier
+   - title: concise section heading
+   - description: short scope description
+""",
+}
+
+
+def build_lifecycle_operation_instructions(allowed_operations):
+    allowed = [op for op in allowed_operations if op in LIFECYCLE_OPERATION_INSTRUCTIONS]
+    if not allowed:
+        return ""
+    return """
+
+**Lifecycle operations are enabled.** Propose only operations justified by the
+current Playbook and the supplied reflection. Every referenced ID must exist.
+Never delete an entry merely because it is irrelevant to the current query.
+
+Allowed operations in this run:\n""" + "\n".join(LIFECYCLE_OPERATION_INSTRUCTIONS[op] for op in allowed) + """
+
+Prefer UPDATE over DELETE when the core rule remains valid. Prefer MERGE over
+DELETE when several entries express the same valid rule. Return an empty list
+when no localized change is justified.
+"""

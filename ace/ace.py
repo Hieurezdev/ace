@@ -42,6 +42,14 @@ class ACE:
         initial_playbook: Optional[str] = None,
         use_bulletpoint_analyzer: bool = False,
         bulletpoint_analyzer_threshold: float = 0.90,
+        use_lifecycle_curator: bool = False,
+        use_curator_update: bool = False,
+        use_curator_delete: bool = False,
+        use_curator_merge: bool = False,
+        use_curator_create_meta: bool = False,
+        use_dbscan_merge: bool = False,
+        dbscan_eps: float = 0.12,
+        dbscan_min_samples: int = 2,
         use_rae: bool = False,
         rae_top_k: int = 10,
         rae_retrieval_mode: str = "semantic",
@@ -69,6 +77,12 @@ class ACE:
             initial_playbook: Initial playbook content (optional)
             use_bulletpoint_analyzer: Whether to use bulletpoint analyzer for deduplication
             bulletpoint_analyzer_threshold: Similarity threshold for bulletpoint analyzer (0-1)
+            use_lifecycle_curator: Enable Curator UPDATE, DELETE, MERGE, and CREATE_META operations.
+            use_curator_update: Enable Curator UPDATE operations only.
+            use_curator_delete: Enable Curator DELETE operations only.
+            use_curator_merge: Enable Curator MERGE operations only.
+            use_curator_create_meta: Enable Curator CREATE_META operations only.
+            use_dbscan_merge: Cluster embedding-near bullets with DBSCAN during analyzer hygiene.
             use_rae: Enable Retrieval-Augmented Execution at the Generator (Top-K bullet retrieval)
             rae_top_k: Number of Top-K bullets to retrieve per query when RAE is enabled
             rae_retrieval_mode: ``semantic`` retrieval or the deterministic
@@ -99,6 +113,18 @@ class ACE:
         # Initialize bulletpoint analyzer if requested and available
         self.use_bulletpoint_analyzer = use_bulletpoint_analyzer
         self.bulletpoint_analyzer_threshold = bulletpoint_analyzer_threshold
+        self.curator_allowed_operations = ["ADD"]
+        if use_lifecycle_curator or use_curator_update:
+            self.curator_allowed_operations.append("UPDATE")
+        if use_lifecycle_curator or use_curator_delete:
+            self.curator_allowed_operations.append("DELETE")
+        if use_lifecycle_curator or use_curator_merge:
+            self.curator_allowed_operations.append("MERGE")
+        if use_lifecycle_curator or use_curator_create_meta:
+            self.curator_allowed_operations.append("CREATE_META")
+        self.use_dbscan_merge = use_dbscan_merge
+        self.dbscan_eps = dbscan_eps
+        self.dbscan_min_samples = dbscan_min_samples
         
         if use_bulletpoint_analyzer:
             self.bulletpoint_analyzer = BulletpointAnalyzer(
@@ -106,7 +132,8 @@ class ACE:
                 curator_model, 
                 max_tokens
             )
-            print(f"✓ BulletpointAnalyzer initialized (threshold={bulletpoint_analyzer_threshold})")
+            clustering = "DBSCAN" if use_dbscan_merge else "pairwise"
+            print(f"✓ BulletpointAnalyzer initialized ({clustering}, threshold={bulletpoint_analyzer_threshold})")
         else:
             self.bulletpoint_analyzer = None
 
@@ -837,6 +864,7 @@ class ACE:
                 call_id=f"{step_id}_adv_curate",
                 log_dir=log_dir,
                 next_global_id=self.next_global_id,
+                allowed_operations=self.curator_allowed_operations,
             )
             if self.failure_memory is not None and self.failure_memory.mode == "verified":
                 self.failure_memory.record_curator_result(
@@ -864,6 +892,11 @@ class ACE:
                     playbook=self.playbook,
                     threshold=self.bulletpoint_analyzer_threshold,
                     merge=True,
+                    clustering="dbscan" if self.use_dbscan_merge else "pairwise",
+                    dbscan_eps=self.dbscan_eps,
+                    dbscan_min_samples=self.dbscan_min_samples,
+                    log_dir=log_dir,
+                    call_id=f"{step_id}_adv_hygiene",
                 )
 
             if self.use_rae and self.playbook_retriever:
@@ -1156,7 +1189,8 @@ class ACE:
                 use_json_mode=use_json_mode,
                 call_id=step_id,
                 log_dir=log_dir,
-                next_global_id=self.next_global_id
+                next_global_id=self.next_global_id,
+                allowed_operations=self.curator_allowed_operations,
             )
             if self.failure_memory is not None and self.failure_memory.mode == "verified":
                 self.failure_memory.record_curator_result(
@@ -1171,7 +1205,12 @@ class ACE:
                 self.playbook = self.bulletpoint_analyzer.analyze(
                     playbook=self.playbook,
                     threshold=self.bulletpoint_analyzer_threshold,
-                    merge=True
+                    merge=True,
+                    clustering="dbscan" if self.use_dbscan_merge else "pairwise",
+                    dbscan_eps=self.dbscan_eps,
+                    dbscan_min_samples=self.dbscan_min_samples,
+                    log_dir=log_dir,
+                    call_id=f"{step_id}_hygiene",
                 )
 
             # Rebuild RAE index with the updated playbook

@@ -98,6 +98,7 @@ def log_curator_operation_diff(log_dir, operation, playbook_text, call_id):
         
         operation_diff = {
             "timestamp": datetime.now().isoformat(),
+            "event": "curator_operation_proposed",
             "operation_type": op_type,
             "reason": reason,
         }
@@ -136,7 +137,7 @@ def log_curator_operation_diff(log_dir, operation, playbook_text, call_id):
         })
         
     elif op_type == 'UPDATE':
-        bullet_id = operation.get('bullet_id', '')
+        bullet_id = operation.get('target_id', operation.get('bullet_id', ''))
         new_content = operation.get('content', '')
         
         # Find old content
@@ -158,6 +159,25 @@ def log_curator_operation_diff(log_dir, operation, playbook_text, call_id):
                 "length_change": len(new_content) - (len(old_content) if old_content else 0)
             }
         })
+
+    elif op_type == 'DELETE':
+        bullet_id = operation.get('target_id', '')
+        deleted_bullet = None
+        for line in playbook_text.strip().split('\n'):
+            parsed = parse_playbook_line(line)
+            if parsed and parsed['id'] == bullet_id:
+                deleted_bullet = {
+                    "bullet_id": bullet_id,
+                    "content": parsed['content'],
+                    "helpful": parsed['helpful'],
+                    "harmful": parsed['harmful'],
+                }
+                break
+        operation_diff.update({
+            "target_id": bullet_id,
+            "target_bullet": deleted_bullet,
+            "evidence_failure_ids": operation.get('evidence_failure_ids', []),
+        })
         
     elif op_type == 'ADD':
         section = operation.get('section', 'others')
@@ -169,11 +189,10 @@ def log_curator_operation_diff(log_dir, operation, playbook_text, call_id):
         })
         
     elif op_type == 'CREATE_META':
-        section = operation.get('section', 'meta_strategies')
-        content = operation.get('content', '')
         operation_diff.update({
-            "section": section,
-            "content": content,
+            "section_id": operation.get('section_id', ''),
+            "title": operation.get('title', operation.get('section', '')),
+            "description": operation.get('description', ''),
             "meta_type": "section_creation"
         })
     
@@ -184,6 +203,19 @@ def log_curator_operation_diff(log_dir, operation, playbook_text, call_id):
             f.write(json.dumps(operation_diff, ensure_ascii=False) + '\n')
     except Exception as e:
         print(f"Warning: Failed to write curator operation diff log: {e}")
+
+
+def log_playbook_hygiene(log_dir, event):
+    """Append structured lifecycle/DBSCAN hygiene events for experiment analysis."""
+    if not log_dir:
+        return
+    try:
+        os.makedirs(log_dir, exist_ok=True)
+        payload = {"timestamp": datetime.now().isoformat(), **event}
+        with open(os.path.join(log_dir, "playbook_hygiene.jsonl"), "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception as exc:
+        print(f"Warning: Failed to write playbook hygiene log: {exc}")
 
 
 def log_problematic_request(call_id, prompt, model, api_params, exception, log_dir, using_key_mixer, key_mixer):

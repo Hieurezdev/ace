@@ -6,9 +6,13 @@ Manages playbook operations (ADD, UPDATE, MERGE, DELETE).
 import json
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Any
-from ..prompts.curator import CURATOR_PROMPT, CURATOR_PROMPT_NO_GT
+from ..prompts.curator import (
+    CURATOR_PROMPT,
+    CURATOR_PROMPT_NO_GT,
+    build_lifecycle_operation_instructions,
+)
 from playbook_utils import extract_json_from_text, apply_curator_operations
-from logger import log_curator_operation_diff, log_curator_failure
+from logger import log_curator_operation_diff, log_curator_failure, log_playbook_hygiene
 from llm import timed_llm_call
 
 class Curator:
@@ -45,7 +49,8 @@ class Curator:
         use_json_mode: bool = False,
         call_id: str = "curate",
         log_dir: Optional[str] = None,
-        next_global_id: int = 1
+        next_global_id: int = 1,
+        allowed_operations: Optional[List[str]] = None,
     ) -> Tuple[str, int, List[Dict[str, Any]], Dict[str, Any]]:
         """
         Curate the playbook based on reflection feedback.
@@ -92,6 +97,9 @@ class Curator:
                 question_context=question_context
             )
         
+        allowed_operations = allowed_operations or ["ADD"]
+        prompt += build_lifecycle_operation_instructions(allowed_operations)
+
         # Make the LLM call
         response, call_info = timed_llm_call(
             self.api_client,
@@ -114,7 +122,10 @@ class Curator:
         
         # Extract and validate operations
         try:
-            operations_info = self._extract_and_validate_operations(response)
+            operations_info = self._extract_and_validate_operations(
+                response,
+                allowed_operations=allowed_operations,
+            )
             
             operations = operations_info["operations"]
             print(f"✅ Curator JSON schema validated successfully: {len(operations)} operations")
@@ -130,6 +141,19 @@ class Curator:
             updated_playbook, next_global_id = apply_curator_operations(
                 current_playbook, operations, next_global_id
             )
+            log_playbook_hygiene(Path(log_dir).parent if log_dir else None, {
+                "event": "curator_lifecycle_batch_applied",
+                "call_id": call_id,
+                "step": current_step,
+                "allowed_operations": allowed_operations,
+                "operation_counts": {
+                    op_type: sum(1 for op in operations if op.get("type") == op_type)
+                    for op_type in sorted({op.get("type", "UNKNOWN") for op in operations})
+                },
+                "playbook_chars_before": len(current_playbook),
+                "playbook_chars_after": len(updated_playbook),
+                "playbook_delta_chars": len(updated_playbook) - len(current_playbook),
+            })
             
             # Log operations
             for op in operations:
@@ -164,7 +188,8 @@ class Curator:
     
     def _extract_and_validate_operations(
         self,
-        response: str
+        response: str,
+        allowed_operations: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """
         Extract and validate operations from curator response.
@@ -199,6 +224,7 @@ class Curator:
         if not isinstance(operations_info["operations"], list):
             raise ValueError("'operations' field must be a list")
         
+        allowed_operations = set(allowed_operations or ["ADD"])
         # Validate operations structure
         for i, op in enumerate(operations_info["operations"]):
             if not isinstance(op, dict):
@@ -208,11 +234,14 @@ class Curator:
                 raise ValueError(f"Operation {i} missing required 'type' field")
             
             op_type = op["type"]
+
+            if op_type not in allowed_operations:
+                raise ValueError(
+                    f"Curator operation '{op_type}' is disabled for this run"
+                )
             
-            # Currently only ADD operations are fully supported
-            # Note: You can add support for UPDATE, MERGE, DELETE operations here
             if op_type not in ["ADD", "UPDATE", "MERGE", "DELETE", "CREATE_META"]:
-                print(f"Warning: Operation type '{op_type}' may not be fully supported")
+                raise ValueError(f"Unsupported curator operation: {op_type}")
             
             # Validate ADD operation structure
             if op_type == "ADD":
@@ -220,5 +249,25 @@ class Curator:
                 missing_fields = required_fields - set(op.keys())
                 if missing_fields:
                     raise ValueError(f"ADD operation {i} missing fields: {list(missing_fields)}")
+            elif op_type == "UPDATE":
+                required_fields = {"type", "target_id", "content", "reason"}
+                missing_fields = required_fields - set(op.keys())
+                if missing_fields:
+                    raise ValueError(f"UPDATE operation {i} missing fields: {list(missing_fields)}")
+            elif op_type == "DELETE":
+                required_fields = {"type", "target_id", "reason"}
+                missing_fields = required_fields - set(op.keys())
+                if missing_fields:
+                    raise ValueError(f"DELETE operation {i} missing fields: {list(missing_fields)}")
+            elif op_type == "MERGE":
+                required_fields = {"type", "source_ids", "section", "content", "reason"}
+                missing_fields = required_fields - set(op.keys())
+                if missing_fields or not isinstance(op.get("source_ids"), list):
+                    raise ValueError(f"MERGE operation {i} requires source_ids, section, content, and reason")
+            elif op_type == "CREATE_META":
+                required_fields = {"type", "section_id", "title", "description"}
+                missing_fields = required_fields - set(op.keys())
+                if missing_fields:
+                    raise ValueError(f"CREATE_META operation {i} missing fields: {list(missing_fields)}")
         
         return operations_info

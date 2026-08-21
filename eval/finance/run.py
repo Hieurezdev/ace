@@ -82,6 +82,22 @@ def parse_args():
                         help="Enable bulletpoint analyzer for deduplication and merging")
     parser.add_argument("--bulletpoint_analyzer_threshold", type=float, default=0.90,
                         help="Similarity threshold for bulletpoint analyzer (0-1, default: 0.90)")
+    parser.add_argument("--use_lifecycle_curator", action="store_true",
+                        help="Enable all Curator lifecycle operations (UPDATE, DELETE, MERGE, CREATE_META)")
+    parser.add_argument("--use_curator_update", action="store_true",
+                        help="Enable only Curator UPDATE in addition to legacy ADD")
+    parser.add_argument("--use_curator_delete", action="store_true",
+                        help="Enable only Curator DELETE in addition to legacy ADD")
+    parser.add_argument("--use_curator_merge", action="store_true",
+                        help="Enable only Curator MERGE in addition to legacy ADD")
+    parser.add_argument("--use_curator_create_meta", action="store_true",
+                        help="Enable only Curator CREATE_META in addition to legacy ADD")
+    parser.add_argument("--use_dbscan_merge", action="store_true",
+                        help="Use DBSCAN cosine-distance clusters for BulletpointAnalyzer merging")
+    parser.add_argument("--dbscan_eps", type=float, default=0.12,
+                        help="Maximum cosine distance inside a DBSCAN merge cluster (default: 0.12)")
+    parser.add_argument("--dbscan_min_samples", type=int, default=2,
+                        help="Minimum bullets needed for a DBSCAN merge cluster (default: 2)")
 
     # RAE configuration
     rae_group = parser.add_mutually_exclusive_group()
@@ -332,6 +348,14 @@ def main():
         initial_playbook=initial_playbook,
         use_bulletpoint_analyzer=args.use_bulletpoint_analyzer,
         bulletpoint_analyzer_threshold=args.bulletpoint_analyzer_threshold,
+        use_lifecycle_curator=args.use_lifecycle_curator,
+        use_curator_update=args.use_curator_update,
+        use_curator_delete=args.use_curator_delete,
+        use_curator_merge=args.use_curator_merge,
+        use_curator_create_meta=args.use_curator_create_meta,
+        use_dbscan_merge=args.use_dbscan_merge,
+        dbscan_eps=args.dbscan_eps,
+        dbscan_min_samples=args.dbscan_min_samples,
         use_rae=(args.use_rae or args.use_random_rae),
         rae_top_k=args.rae_top_k,
         rae_retrieval_mode=("random" if args.use_random_rae else "semantic"),
@@ -374,6 +398,14 @@ def main():
         'max_train_samples': args.max_train_samples,
         'use_bulletpoint_analyzer': args.use_bulletpoint_analyzer,
         'bulletpoint_analyzer_threshold': args.bulletpoint_analyzer_threshold,
+        'use_lifecycle_curator': args.use_lifecycle_curator,
+        'use_curator_update': args.use_curator_update,
+        'use_curator_delete': args.use_curator_delete,
+        'use_curator_merge': args.use_curator_merge,
+        'use_curator_create_meta': args.use_curator_create_meta,
+        'use_dbscan_merge': args.use_dbscan_merge,
+        'dbscan_eps': args.dbscan_eps,
+        'dbscan_min_samples': args.dbscan_min_samples,
         'use_rae': (args.use_rae or args.use_random_rae),
         'rae_top_k': args.rae_top_k,
         'rae_retrieval_mode': ("random" if args.use_random_rae else "semantic"),

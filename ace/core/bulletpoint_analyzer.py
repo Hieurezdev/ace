@@ -9,10 +9,12 @@ import re
 import numpy as np
 from typing import List, Dict, Tuple, Any, Optional
 from collections import defaultdict
+from logger import log_playbook_hygiene
 
 try:
     from sentence_transformers import SentenceTransformer
     import faiss
+    from sklearn.cluster import DBSCAN
     DEDUP_AVAILABLE = True
 except ImportError:
     DEDUP_AVAILABLE = False
@@ -189,6 +191,33 @@ class BulletpointAnalyzer:
                 visited.update(group)
         
         return duplicate_groups
+
+    def _find_dbscan_groups(
+        self,
+        bullets: List[Dict[str, Any]],
+        embeddings: np.ndarray,
+        eps: float,
+        min_samples: int,
+    ) -> List[Dict[str, Any]]:
+        """Cluster near-duplicate bullets using cosine distance over normalized embeddings."""
+        if not 0.0 < eps < 1.0:
+            raise ValueError("DBSCAN eps must be between 0 and 1 for cosine distance")
+        labels = DBSCAN(
+            eps=eps,
+            min_samples=min_samples,
+            metric="cosine",
+        ).fit_predict(embeddings)
+        groups = []
+        for label in sorted(set(labels)):
+            if label == -1:
+                continue
+            indices = np.where(labels == label)[0].tolist()
+            if len(indices) >= min_samples:
+                groups.append({
+                    "indices": indices,
+                    "bullets": [bullets[index] for index in indices],
+                })
+        return groups
     
     def _merge_bullets_with_llm(self, bullets_group: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """
@@ -274,7 +303,12 @@ Do NOT include any explanation, just output the merged bulletpoint."""
         self,
         playbook: str,
         threshold: float = 0.90,
-        merge: bool = True
+        merge: bool = True,
+        clustering: str = "pairwise",
+        dbscan_eps: float = 0.12,
+        dbscan_min_samples: int = 2,
+        log_dir: Optional[str] = None,
+        call_id: Optional[str] = None,
     ) -> str:
         """
         Analyze and deduplicate/merge playbook bulletpoints.
@@ -283,18 +317,35 @@ Do NOT include any explanation, just output the merged bulletpoint."""
             playbook: Playbook content as string
             threshold: Similarity threshold for grouping (default: 0.90)
             merge: If True, merge similar bullets with LLM; if False, just deduplicate
+            clustering: ``pairwise`` for legacy threshold grouping or ``dbscan`` for density clusters.
+            dbscan_eps: Maximum cosine distance for DBSCAN clusters.
+            dbscan_min_samples: Minimum bullets required to form a DBSCAN cluster.
+            log_dir: Directory for structured hygiene logs.
+            call_id: Curator/adversarial call identifier associated with this pass.
             
         Returns:
             Processed playbook string
         """
         if not DEDUP_AVAILABLE:
             print("⚠️  Skipping bulletpoint analysis (dependencies not available)")
+            log_playbook_hygiene(log_dir, {
+                "event": "bulletpoint_hygiene_skipped",
+                "call_id": call_id,
+                "clustering": clustering,
+                "reason": "dependencies_not_available",
+            })
             return playbook
         
         # Parse playbook
         original_lines, bullets, bullet_line_mapping = self._parse_playbook(playbook)
         
         if len(bullets) == 0:
+            log_playbook_hygiene(log_dir, {
+                "event": "bulletpoint_hygiene_skipped",
+                "call_id": call_id,
+                "clustering": clustering,
+                "reason": "no_bullets",
+            })
             return playbook
         
         print(f"Analyzing {len(bullets)} bulletpoints (threshold={threshold})...")
@@ -302,14 +353,39 @@ Do NOT include any explanation, just output the merged bulletpoint."""
         # Compute embeddings
         embeddings = self._compute_embeddings(bullets)
         
-        # Find similar groups
-        duplicate_groups = self._find_similar_groups(bullets, embeddings, threshold)
+        # Find similar groups. DBSCAN produces disjoint density clusters and avoids
+        # the overlapping pairwise groups produced by the legacy implementation.
+        if clustering == "dbscan":
+            duplicate_groups = self._find_dbscan_groups(
+                bullets, embeddings, eps=dbscan_eps, min_samples=dbscan_min_samples
+            )
+        elif clustering == "pairwise":
+            duplicate_groups = self._find_similar_groups(bullets, embeddings, threshold)
+        else:
+            raise ValueError(f"Unknown clustering mode: {clustering}")
         
         if len(duplicate_groups) == 0:
             print(f"No similar bulletpoints found at threshold {threshold}")
+            log_playbook_hygiene(log_dir, {
+                "event": "bulletpoint_hygiene_completed",
+                "call_id": call_id,
+                "clustering": clustering,
+                "threshold": threshold,
+                "dbscan_eps": dbscan_eps if clustering == "dbscan" else None,
+                "dbscan_min_samples": dbscan_min_samples if clustering == "dbscan" else None,
+                "input_bullet_count": len(bullets),
+                "cluster_count": 0,
+                "clusters": [],
+                "merge_enabled": merge,
+                "output_bullet_count": len(bullets),
+            })
             return playbook
         
-        print(f"Found {len(duplicate_groups)} groups of similar bulletpoints")
+        print(f"Found {len(duplicate_groups)} {clustering} groups of similar bulletpoints")
+        cluster_log = [
+            {"cluster_index": index + 1, "bullet_ids": [bullet["id"] for bullet in group["bullets"]]}
+            for index, group in enumerate(duplicate_groups)
+        ]
         
         # Create merge mapping
         merge_mapping = {}
@@ -368,5 +444,19 @@ Do NOT include any explanation, just output the merged bulletpoint."""
         
         print(f"✓ Bulletpoint analysis complete: {len(bullets)} -> {final_bullet_count} "
               f"({removed_count} bullets merged/removed)")
-        
+        log_playbook_hygiene(log_dir, {
+            "event": "bulletpoint_hygiene_completed",
+            "call_id": call_id,
+            "clustering": clustering,
+            "threshold": threshold,
+            "dbscan_eps": dbscan_eps if clustering == "dbscan" else None,
+            "dbscan_min_samples": dbscan_min_samples if clustering == "dbscan" else None,
+            "input_bullet_count": len(bullets),
+            "output_bullet_count": final_bullet_count,
+            "removed_or_merged_count": removed_count,
+            "cluster_count": len(duplicate_groups),
+            "clusters": cluster_log,
+            "merge_enabled": merge,
+        })
+
         return '\n'.join(output_lines)
