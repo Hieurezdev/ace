@@ -151,7 +151,14 @@ def apply_curator_operations(playbook_text, operations, next_id):
                 updates[target_id] = content
                 print(f"  Updated bullet {target_id}")
             else:
-                print(f"  Skipped UPDATE: unknown target or empty content ({target_id})")
+                reason = "unknown target" if target_id not in active_ids else "empty content"
+                known_preview = ", ".join(sorted(active_ids)[:12]) or "(no active bullets)"
+                print(
+                    f"  Skipped UPDATE: {reason} ({target_id}). "
+                    f"Known IDs: {known_preview}"
+                )
+                op["_execution_status"] = "skipped"
+                op["_execution_reason"] = reason
             continue
         if op_type == 'DELETE':
             target_id = op.get('target_id', '')
@@ -159,7 +166,10 @@ def apply_curator_operations(playbook_text, operations, next_id):
                 deletes.add(target_id)
                 print(f"  Deleted bullet {target_id}")
             else:
-                print(f"  Skipped DELETE: target missing or reason absent ({target_id})")
+                reason = "unknown target" if target_id not in active_ids else "missing reason"
+                print(f"  Skipped DELETE: {reason} ({target_id})")
+                op["_execution_status"] = "skipped"
+                op["_execution_reason"] = reason
             continue
         if op_type == 'MERGE':
             source_ids = list(dict.fromkeys(op.get('source_ids', [])))

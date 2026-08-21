@@ -152,6 +152,14 @@ class Curator:
                     op_type: sum(1 for op in operations if op.get("type") == op_type)
                     for op_type in sorted({op.get("type", "UNKNOWN") for op in operations})
                 },
+                "execution_outcomes": [
+                    {
+                        "type": op.get("type"),
+                        "status": op.get("_execution_status", "applied"),
+                        "reason": op.get("_execution_reason"),
+                    }
+                    for op in operations
+                ],
                 "playbook_chars_before": len(current_playbook),
                 "playbook_chars_after": len(updated_playbook),
                 "playbook_delta_chars": len(updated_playbook) - len(current_playbook),

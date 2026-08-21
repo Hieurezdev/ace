@@ -20,6 +20,9 @@ CURATOR_PROMPT = """You are a master curator of knowledge. Your job is to identi
 - Format your response as a PURE JSON object with specific sections
 - For any operation if no new content to add, return an empty list for the operations field
 - Be concise and specific - each addition should be actionable
+- `helpful` and `harmful` are execution counters maintained by the Reflector;
+  they are not editable Curator metadata. Do not use UPDATE to relabel or
+  repair those counters. UPDATE may only replace the textual rule content.
 
 
 **Training Context:**
@@ -76,6 +79,9 @@ CURATOR_PROMPT_NO_GT = """You are a master curator of knowledge. Your job is to 
 - Format your response as a PURE JSON object with specific sections
 - For any operation if no new content to add, return an empty list for the operations field
 - Be concise and specific - each addition should be actionable
+- `helpful` and `harmful` are execution counters maintained by the Reflector;
+  they are not editable Curator metadata. Do not use UPDATE to relabel or
+  repair those counters. UPDATE may only replace the textual rule content.
 
 
 **Training Context:**
