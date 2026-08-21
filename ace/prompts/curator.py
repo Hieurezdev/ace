@@ -52,7 +52,7 @@ operation must follow the enabled operation schema below.
   "reasoning": "[Your chain of thought / reasoning / thinking process, detailed analysis and calculations here]",
   "operations": [
     {{
-      "type": "ADD", 
+      "type": "[One enabled operation type]", 
       "section": "formulas_and_calculations",
       "content": "[New calculation method...]"
     }}
@@ -111,7 +111,7 @@ operation must follow the enabled operation schema below.
   "reasoning": "[Your chain of thought / reasoning / thinking process, detailed analysis and calculations here]",
   "operations": [
     {{
-      "type": "ADD", 
+      "type": "[One enabled operation type]", 
       "section": "formulas_and_calculations",
       "content": "[New calculation method...]"
     }}
