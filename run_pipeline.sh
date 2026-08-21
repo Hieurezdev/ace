@@ -74,7 +74,6 @@ uv run python -m eval.finance.run \
     --test_workers 5 \
     --seed 42 \
     --eval_steps 50 \
-    --save_steps 25 \
-    --initial_playbook_path /data/experiment/ace/results/ace_run_20260801_155800_finer_0.5_offline/final_playbook.txt
+    --save_steps 25 
 
 echo ">>> Done!"

@@ -75,6 +75,9 @@ class Curator:
         # Format playbook stats as JSON string
         stats_str = json.dumps(playbook_stats, indent=2)
         
+        allowed_operations = allowed_operations or ["ADD"]
+        operation_schema = build_lifecycle_operation_instructions(allowed_operations)
+
         # Select the appropriate prompt
         if use_ground_truth:
             prompt = CURATOR_PROMPT.format(
@@ -84,7 +87,8 @@ class Curator:
                 playbook_stats=stats_str,
                 recent_reflection=recent_reflection,
                 current_playbook=current_playbook,
-                question_context=question_context
+                question_context=question_context,
+                operation_schema=operation_schema,
             )
         else:
             prompt = CURATOR_PROMPT_NO_GT.format(
@@ -94,11 +98,9 @@ class Curator:
                 playbook_stats=stats_str,
                 recent_reflection=recent_reflection,
                 current_playbook=current_playbook,
-                question_context=question_context
+                question_context=question_context,
+                operation_schema=operation_schema,
             )
-        
-        allowed_operations = allowed_operations or ["ADD"]
-        prompt += build_lifecycle_operation_instructions(allowed_operations)
 
         # Make the LLM call
         response, call_info = timed_llm_call(

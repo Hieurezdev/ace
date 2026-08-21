@@ -39,17 +39,10 @@ CURATOR_PROMPT = """You are a master curator of knowledge. Your job is to identi
 {question_context}
 
 **Your Task:**
-Output ONLY a valid JSON object with these exact fields:
-- reasoning: your chain of thought / reasoning / thinking process, detailed analysis and calculations
-- operations: a list of operations to be performed on the playbook
-  - type: the type of operation to be performed
-  - section: the section to add the bullet to
-  - content: the new content of the bullet
+Output ONLY a valid JSON object with `reasoning` and `operations`. Each
+operation must follow the enabled operation schema below.
 
-**Available Operations:**
-1. ADD: Create new bullet points with fresh IDs
-    - section: the section to add the new bullet to
-    - content: the new content of the bullet. Note: no need to include the bullet_id in the content like '[ctx-00263] helpful=1 harmful=0 ::', the bullet_id will be added by the system.
+{operation_schema}
 
 **RESPONSE FORMAT - Output ONLY this JSON structure (no markdown, no code blocks):**
 {{
@@ -102,17 +95,10 @@ CURATOR_PROMPT_NO_GT = """You are a master curator of knowledge. Your job is to 
 {question_context}
 
 **Your Task:**
-Output ONLY a valid JSON object with these exact fields:
-- reasoning: your chain of thought / reasoning / thinking process, detailed analysis and calculations
-- operations: a list of operations to be performed on the playbook
-  - type: the type of operation to be performed
-  - section: the section to add the bullet to
-  - content: the new content of the bullet
+Output ONLY a valid JSON object with `reasoning` and `operations`. Each
+operation must follow the enabled operation schema below.
 
-**Available Operations:**
-1. ADD: Create new bullet points with fresh IDs
-    - section: the section to add the new bullet to
-    - content: the new content of the bullet. Note: no need to include the bullet_id in the content like '[ctx-00263] helpful=1 harmful=0 ::', the bullet_id will be added by the system.
+{operation_schema}
 
 **RESPONSE FORMAT - Output ONLY this JSON structure (no markdown, no code blocks):**
 {{
@@ -131,6 +117,11 @@ Output ONLY a valid JSON object with these exact fields:
 
 
 LIFECYCLE_OPERATION_INSTRUCTIONS = {
+"ADD": """
+1. ADD: Create one new bullet with a fresh system-assigned ID.
+   - section: destination section
+   - content: actionable, reusable rule; do not include an ID yourself
+""",
 "UPDATE": """
 2. UPDATE: Correct or clarify one existing bullet.
    - target_id: existing bullet ID
@@ -163,14 +154,14 @@ LIFECYCLE_OPERATION_INSTRUCTIONS = {
 def build_lifecycle_operation_instructions(allowed_operations):
     allowed = [op for op in allowed_operations if op in LIFECYCLE_OPERATION_INSTRUCTIONS]
     if not allowed:
-        return ""
+        allowed = ["ADD"]
     return """
+**Enabled Operations (strict allow-list):**
+Propose only operations justified by the current Playbook and supplied
+reflection. Every referenced ID must exist. Never delete an entry merely
+because it is irrelevant to the current query.
 
-**Lifecycle operations are enabled.** Propose only operations justified by the
-current Playbook and the supplied reflection. Every referenced ID must exist.
-Never delete an entry merely because it is irrelevant to the current query.
-
-Allowed operations in this run:\n""" + "\n".join(LIFECYCLE_OPERATION_INSTRUCTIONS[op] for op in allowed) + """
+""" + "\n".join(LIFECYCLE_OPERATION_INSTRUCTIONS[op] for op in allowed) + """
 
 Prefer UPDATE over DELETE when the core rule remains valid. Prefer MERGE over
 DELETE when several entries express the same valid rule. Return an empty list
