@@ -50,6 +50,8 @@ class ACE:
         use_dbscan_merge: bool = False,
         dbscan_eps: float = 0.12,
         dbscan_min_samples: int = 2,
+        delete_harmful_margin: int = 4,
+        delete_min_harmful: int = 3,
         use_rae: bool = False,
         rae_top_k: int = 10,
         rae_retrieval_mode: str = "semantic",
@@ -125,6 +127,8 @@ class ACE:
         self.use_dbscan_merge = use_dbscan_merge
         self.dbscan_eps = dbscan_eps
         self.dbscan_min_samples = dbscan_min_samples
+        self.delete_harmful_margin = delete_harmful_margin
+        self.delete_min_harmful = delete_min_harmful
         
         if use_bulletpoint_analyzer:
             self.bulletpoint_analyzer = BulletpointAnalyzer(
@@ -865,6 +869,8 @@ class ACE:
                 log_dir=log_dir,
                 next_global_id=self.next_global_id,
                 allowed_operations=self.curator_allowed_operations,
+                delete_harmful_margin=self.delete_harmful_margin,
+                delete_min_harmful=self.delete_min_harmful,
             )
             if self.failure_memory is not None and self.failure_memory.mode == "verified":
                 self.failure_memory.record_curator_result(
@@ -1191,6 +1197,8 @@ class ACE:
                 log_dir=log_dir,
                 next_global_id=self.next_global_id,
                 allowed_operations=self.curator_allowed_operations,
+                delete_harmful_margin=self.delete_harmful_margin,
+                delete_min_harmful=self.delete_min_harmful,
             )
             if self.failure_memory is not None and self.failure_memory.mode == "verified":
                 self.failure_memory.record_curator_result(

@@ -88,6 +88,10 @@ def parse_args():
                         help="Enable only Curator UPDATE in addition to legacy ADD")
     parser.add_argument("--use_curator_delete", action="store_true",
                         help="Enable only Curator DELETE in addition to legacy ADD")
+    parser.add_argument("--delete_harmful_margin", type=int, default=4,
+                        help="Nominate a bullet for DELETE audit when harmful - helpful reaches this margin")
+    parser.add_argument("--delete_min_harmful", type=int, default=3,
+                        help="Minimum harmful observations before a DELETE audit")
     parser.add_argument("--use_curator_merge", action="store_true",
                         help="Enable only Curator MERGE in addition to legacy ADD")
     parser.add_argument("--use_curator_create_meta", action="store_true",
@@ -351,6 +355,8 @@ def main():
         use_lifecycle_curator=args.use_lifecycle_curator,
         use_curator_update=args.use_curator_update,
         use_curator_delete=args.use_curator_delete,
+        delete_harmful_margin=args.delete_harmful_margin,
+        delete_min_harmful=args.delete_min_harmful,
         use_curator_merge=args.use_curator_merge,
         use_curator_create_meta=args.use_curator_create_meta,
         use_dbscan_merge=args.use_dbscan_merge,
@@ -401,6 +407,8 @@ def main():
         'use_lifecycle_curator': args.use_lifecycle_curator,
         'use_curator_update': args.use_curator_update,
         'use_curator_delete': args.use_curator_delete,
+        'delete_harmful_margin': args.delete_harmful_margin,
+        'delete_min_harmful': args.delete_min_harmful,
         'use_curator_merge': args.use_curator_merge,
         'use_curator_create_meta': args.use_curator_create_meta,
         'use_dbscan_merge': args.use_dbscan_merge,

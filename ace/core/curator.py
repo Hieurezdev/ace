@@ -38,60 +38,34 @@ class Curator:
         self.max_tokens = max_tokens
 
     @staticmethod
-    def _find_delete_conflict_candidates(playbook: str, limit: int = 12) -> List[Dict[str, Any]]:
-        """Find high-signal formatting-rule contradictions for Curator DELETE audit.
-
-        This is deliberately a candidate miner, not an automatic deletion rule:
-        formatting can depend on the task's output contract. The Curator must
-        use the reflection/ground truth to decide whether either bullet is
-        actually invalid in the overlapping condition.
-        """
-        strict, conditional = [], []
+    def _find_delete_count_candidates(
+        playbook: str,
+        harmful_margin: int,
+        min_harmful: int,
+        limit: int = 12,
+    ) -> List[Dict[str, Any]]:
+        """Nominate repeatedly harmful rules for a Curator DELETE audit."""
         pattern = re.compile(
             r"^\[([^\]]+)\]\s+helpful=(\d+)\s+harmful=(\d+)\s+::\s*(.+)$"
         )
+        candidates = []
         for line in playbook.splitlines():
             match = pattern.match(line.strip())
             if not match:
                 continue
             bullet_id, helpful, harmful, content = match.groups()
-            normalized = content.lower()
-            if "round to the nearest hundredth" not in normalized and "two decimal" not in normalized:
-                continue
-            item = {
-                "id": bullet_id,
-                "helpful": int(helpful),
-                "harmful": int(harmful),
-                "content": content,
-            }
-            if (
-                "exactly two decimal" in normalized
-                or "always format" in normalized
-                or "must always" in normalized
-            ):
-                strict.append(item)
-            if any(marker in normalized for marker in (
-                "minimal decimal", "no decimal padding", "not padded",
-                "not be reported as", "no rounding or decimal padding",
-            )):
-                conditional.append(item)
-
-        candidates = []
-        seen = set()
-        for left in strict:
-            for right in conditional:
-                pair = tuple(sorted((left["id"], right["id"])))
-                if pair in seen:
-                    continue
-                seen.add(pair)
+            helpful_count, harmful_count = int(helpful), int(harmful)
+            margin = harmful_count - helpful_count
+            if harmful_count >= min_harmful and margin >= harmful_margin:
                 candidates.append({
-                    "candidate_type": "formatting_contract_conflict",
-                    "bullet_ids": list(pair),
-                    "bullets": [left, right],
+                    "candidate_type": "harmful_counter_imbalance",
+                    "target_id": bullet_id,
+                    "helpful": helpful_count,
+                    "harmful": harmful_count,
+                    "harmful_margin": margin,
+                    "content": content,
                 })
-                if len(candidates) >= limit:
-                    return candidates
-        return candidates
+        return sorted(candidates, key=lambda item: item["harmful_margin"], reverse=True)[:limit]
     
     def curate(
         self,
@@ -108,6 +82,8 @@ class Curator:
         log_dir: Optional[str] = None,
         next_global_id: int = 1,
         allowed_operations: Optional[List[str]] = None,
+        delete_harmful_margin: int = 4,
+        delete_min_harmful: int = 3,
     ) -> Tuple[str, int, List[Dict[str, Any]], Dict[str, Any]]:
         """
         Curate the playbook based on reflection feedback.
@@ -136,13 +112,17 @@ class Curator:
         operation_schema = build_lifecycle_operation_instructions(allowed_operations)
         delete_candidates = []
         if "DELETE" in allowed_operations:
-            delete_candidates = self._find_delete_conflict_candidates(current_playbook)
+            delete_candidates = self._find_delete_count_candidates(
+                current_playbook, delete_harmful_margin, delete_min_harmful
+            )
             if delete_candidates:
                 log_playbook_hygiene(Path(log_dir).parent if log_dir else None, {
-                    "event": "delete_conflict_candidates_found",
+                    "event": "delete_counter_candidates_found",
                     "call_id": call_id,
                     "step": current_step,
                     "candidate_count": len(delete_candidates),
+                    "harmful_margin_threshold": delete_harmful_margin,
+                    "min_harmful_threshold": delete_min_harmful,
                     "candidates": delete_candidates,
                 })
 
@@ -174,20 +154,21 @@ class Curator:
             audit_pairs = [
                 {
                     "candidate_type": candidate["candidate_type"],
-                    "bullet_ids": candidate["bullet_ids"],
+                    "target_id": candidate["target_id"],
+                    "helpful": candidate["helpful"],
+                    "harmful": candidate["harmful"],
+                    "harmful_margin": candidate["harmful_margin"],
                 }
                 for candidate in delete_candidates
             ]
             prompt += """
 
-**Mandatory DELETE audit:** The following pairs have overlapping formatting
-conditions but opposite output prescriptions. For each pair, compare its scope
-against the current task's output contract and the supplied reflection. If one
-rule is invalid for the overlapping condition, emit a `DELETE` for that exact
-`target_id` with evidence in `reason`; do not add another formatting rule.
-These are candidates only: retain both when their conditions are genuinely
-disjoint or the evidence is insufficient. The full contents are already in
-the Current Playbook; inspect the listed IDs there.
+**Mandatory DELETE audit:** The following rules have a large `harmful -
+helpful` margin. Verify from the reflection that the rule itself caused the
+failure, rather than merely being retrieved or misapplied. If confirmed
+harmful, obsolete, or contradicted, emit `DELETE` for that exact `target_id`
+with evidence in `reason`. Retain it if causality is not established: counters
+alone are not proof. Do not add a duplicate replacement rule.
 
 """ + json.dumps(audit_pairs, ensure_ascii=False)
 
