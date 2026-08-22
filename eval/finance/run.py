@@ -97,7 +97,9 @@ def parse_args():
     parser.add_argument("--use_curator_create_meta", action="store_true",
                         help="Enable only Curator CREATE_META in addition to legacy ADD")
     parser.add_argument("--use_dbscan_merge", action="store_true",
-                        help="Use DBSCAN cosine-distance clusters for merging (automatically enables BulletpointAnalyzer)")
+                        help="Run DBSCAN BulletpointAnalyzer hygiene merge after Curator")
+    parser.add_argument("--use_dbscan_merge_candidates", action="store_true",
+                        help="Use DBSCAN only to propose candidate groups to Curator MERGE")
     parser.add_argument("--dbscan_eps", type=float, default=0.12,
                         help="Maximum cosine distance inside a DBSCAN merge cluster (default: 0.12)")
     parser.add_argument("--dbscan_min_samples", type=int, default=2,
@@ -360,6 +362,7 @@ def main():
         use_curator_merge=args.use_curator_merge,
         use_curator_create_meta=args.use_curator_create_meta,
         use_dbscan_merge=args.use_dbscan_merge,
+        use_dbscan_merge_candidates=args.use_dbscan_merge_candidates,
         dbscan_eps=args.dbscan_eps,
         dbscan_min_samples=args.dbscan_min_samples,
         use_rae=(args.use_rae or args.use_random_rae),
@@ -412,6 +415,7 @@ def main():
         'use_curator_merge': args.use_curator_merge,
         'use_curator_create_meta': args.use_curator_create_meta,
         'use_dbscan_merge': args.use_dbscan_merge,
+        'use_dbscan_merge_candidates': args.use_dbscan_merge_candidates,
         'dbscan_eps': args.dbscan_eps,
         'dbscan_min_samples': args.dbscan_min_samples,
         'use_rae': (args.use_rae or args.use_random_rae),

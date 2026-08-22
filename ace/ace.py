@@ -48,6 +48,7 @@ class ACE:
         use_curator_merge: bool = False,
         use_curator_create_meta: bool = False,
         use_dbscan_merge: bool = False,
+        use_dbscan_merge_candidates: bool = False,
         dbscan_eps: float = 0.12,
         dbscan_min_samples: int = 2,
         delete_harmful_margin: int = 4,
@@ -84,7 +85,8 @@ class ACE:
             use_curator_delete: Enable Curator DELETE operations only.
             use_curator_merge: Enable Curator MERGE operations only.
             use_curator_create_meta: Enable Curator CREATE_META operations only.
-            use_dbscan_merge: Cluster embedding-near bullets with DBSCAN during analyzer hygiene.
+            use_dbscan_merge: Run BulletpointAnalyzer DBSCAN hygiene merge after curation.
+            use_dbscan_merge_candidates: Use DBSCAN only to propose candidate groups to Curator MERGE.
             use_rae: Enable Retrieval-Augmented Execution at the Generator (Top-K bullet retrieval)
             rae_top_k: Number of Top-K bullets to retrieve per query when RAE is enabled
             rae_retrieval_mode: ``semantic`` retrieval or the deterministic
@@ -128,6 +130,7 @@ class ACE:
         if use_lifecycle_curator or use_curator_create_meta:
             self.curator_allowed_operations.append("CREATE_META")
         self.use_dbscan_merge = use_dbscan_merge
+        self.use_dbscan_merge_candidates = use_dbscan_merge_candidates
         self.dbscan_eps = dbscan_eps
         self.dbscan_min_samples = dbscan_min_samples
         self.delete_harmful_margin = delete_harmful_margin
@@ -139,7 +142,7 @@ class ACE:
                 curator_model, 
                 max_tokens
             )
-            clustering = "DBSCAN" if use_dbscan_merge else "pairwise"
+            clustering = "DBSCAN hygiene" if use_dbscan_merge else "pairwise candidates"
             print(f"✓ BulletpointAnalyzer initialized ({clustering}, threshold={bulletpoint_analyzer_threshold})")
         else:
             self.bulletpoint_analyzer = None
@@ -224,7 +227,7 @@ class ACE:
         return self.bulletpoint_analyzer.discover_merge_candidates(
             playbook=self.playbook,
             threshold=self.bulletpoint_analyzer_threshold,
-            clustering="dbscan" if self.use_dbscan_merge else "pairwise",
+            clustering="dbscan" if self.use_dbscan_merge_candidates else "pairwise",
             dbscan_eps=self.dbscan_eps,
             dbscan_min_samples=self.dbscan_min_samples,
             log_dir=log_dir,
