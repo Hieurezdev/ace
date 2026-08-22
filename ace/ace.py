@@ -113,7 +113,10 @@ class ACE:
         self.curator = Curator(curator_client, api_provider, curator_model, max_tokens)
         
         # Initialize bulletpoint analyzer if requested and available
-        self.use_bulletpoint_analyzer = use_bulletpoint_analyzer
+        # DBSCAN is an analyzer clustering mode; enabling it must also enable
+        # the analyzer or no clustering/merge pass would ever be executed.
+        self.use_bulletpoint_hygiene = use_bulletpoint_analyzer or use_dbscan_merge
+        self.use_bulletpoint_analyzer = self.use_bulletpoint_hygiene
         self.bulletpoint_analyzer_threshold = bulletpoint_analyzer_threshold
         self.curator_allowed_operations = ["ADD"]
         if use_lifecycle_curator or use_curator_update:
@@ -130,7 +133,7 @@ class ACE:
         self.delete_harmful_margin = delete_harmful_margin
         self.delete_min_harmful = delete_min_harmful
         
-        if use_bulletpoint_analyzer:
+        if self.use_bulletpoint_hygiene or "MERGE" in self.curator_allowed_operations:
             self.bulletpoint_analyzer = BulletpointAnalyzer(
                 curator_client, 
                 curator_model, 
@@ -215,6 +218,19 @@ class ACE:
         else:
             self.failure_memory = None
     
+    def _get_curator_merge_candidates(self, log_dir, call_id):
+        if "MERGE" not in self.curator_allowed_operations or not self.bulletpoint_analyzer:
+            return []
+        return self.bulletpoint_analyzer.discover_merge_candidates(
+            playbook=self.playbook,
+            threshold=self.bulletpoint_analyzer_threshold,
+            clustering="dbscan" if self.use_dbscan_merge else "pairwise",
+            dbscan_eps=self.dbscan_eps,
+            dbscan_min_samples=self.dbscan_min_samples,
+            log_dir=log_dir,
+            call_id=f"{call_id}_merge_candidates",
+        )
+
     def _initialize_empty_playbook(self) -> str:
         """Initialize an empty playbook with standard sections."""
         return """## STRATEGIES & INSIGHTS
@@ -871,6 +887,7 @@ class ACE:
                 allowed_operations=self.curator_allowed_operations,
                 delete_harmful_margin=self.delete_harmful_margin,
                 delete_min_harmful=self.delete_min_harmful,
+                merge_candidates=self._get_curator_merge_candidates(log_dir, f"{step_id}_adv_curate"),
             )
             if self.failure_memory is not None and self.failure_memory.mode == "verified":
                 self.failure_memory.record_curator_result(
@@ -1199,6 +1216,7 @@ class ACE:
                 allowed_operations=self.curator_allowed_operations,
                 delete_harmful_margin=self.delete_harmful_margin,
                 delete_min_harmful=self.delete_min_harmful,
+                merge_candidates=self._get_curator_merge_candidates(log_dir, step_id),
             )
             if self.failure_memory is not None and self.failure_memory.mode == "verified":
                 self.failure_memory.record_curator_result(

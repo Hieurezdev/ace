@@ -97,7 +97,7 @@ def parse_args():
     parser.add_argument("--use_curator_create_meta", action="store_true",
                         help="Enable only Curator CREATE_META in addition to legacy ADD")
     parser.add_argument("--use_dbscan_merge", action="store_true",
-                        help="Use DBSCAN cosine-distance clusters for BulletpointAnalyzer merging")
+                        help="Use DBSCAN cosine-distance clusters for merging (automatically enables BulletpointAnalyzer)")
     parser.add_argument("--dbscan_eps", type=float, default=0.12,
                         help="Maximum cosine distance inside a DBSCAN merge cluster (default: 0.12)")
     parser.add_argument("--dbscan_min_samples", type=int, default=2,

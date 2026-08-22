@@ -84,6 +84,7 @@ class Curator:
         allowed_operations: Optional[List[str]] = None,
         delete_harmful_margin: int = 4,
         delete_min_harmful: int = 3,
+        merge_candidates: Optional[List[Dict[str, Any]]] = None,
     ) -> Tuple[str, int, List[Dict[str, Any]], Dict[str, Any]]:
         """
         Curate the playbook based on reflection feedback.
@@ -171,6 +172,17 @@ with evidence in `reason`. Retain it if causality is not established: counters
 alone are not proof. Do not add a duplicate replacement rule.
 
 """ + json.dumps(audit_pairs, ensure_ascii=False)
+
+        if "MERGE" in allowed_operations and merge_candidates:
+            prompt += """
+
+**Mandatory MERGE audit:** The following groups are embedding-near rules from
+the current Playbook. Inspect their full contents. When rules are redundant or
+complementary under the same condition, return one `MERGE` operation with all
+listed `source_ids`, a reconciled `content`, and a `reason`. Do not ADD another
+near-duplicate rule. Retain a group only when its rules are materially distinct.
+
+""" + json.dumps(merge_candidates, ensure_ascii=False)
 
         # Make the LLM call
         response, call_info = timed_llm_call(

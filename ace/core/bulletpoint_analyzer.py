@@ -218,6 +218,45 @@ class BulletpointAnalyzer:
                     "bullets": [bullets[index] for index in indices],
                 })
         return groups
+
+    def discover_merge_candidates(
+        self,
+        playbook: str,
+        threshold: float = 0.90,
+        clustering: str = "pairwise",
+        dbscan_eps: float = 0.12,
+        dbscan_min_samples: int = 2,
+        log_dir: Optional[str] = None,
+        call_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Return embedding-near groups for Curator MERGE decisions only."""
+        if not DEDUP_AVAILABLE:
+            log_playbook_hygiene(log_dir, {
+                "event": "curator_merge_candidates_skipped",
+                "call_id": call_id,
+                "reason": "dependencies_not_available",
+            })
+            return []
+        _, bullets, _ = self._parse_playbook(playbook)
+        if len(bullets) < 2:
+            return []
+        embeddings = self._compute_embeddings(bullets)
+        if clustering == "dbscan":
+            groups = self._find_dbscan_groups(bullets, embeddings, dbscan_eps, dbscan_min_samples)
+        else:
+            groups = self._find_similar_groups(bullets, embeddings, threshold)
+        candidates = [
+            {"bullet_ids": [bullet["id"] for bullet in group["bullets"]]}
+            for group in groups if len(group["bullets"]) >= 2
+        ]
+        log_playbook_hygiene(log_dir, {
+            "event": "curator_merge_candidates_found",
+            "call_id": call_id,
+            "clustering": clustering,
+            "candidate_count": len(candidates),
+            "candidates": candidates,
+        })
+        return candidates
     
     def _merge_bullets_with_llm(self, bullets_group: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """
