@@ -11,6 +11,7 @@ This module coordinates three agents:
 import os
 import json
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Any
 
 from .core import Generator, Reflector, Curator, BulletpointAnalyzer, PlaybookRetriever, FailureMemoryBank
@@ -51,8 +52,11 @@ class ACE:
         use_dbscan_merge_candidates: bool = False,
         dbscan_eps: float = 0.12,
         dbscan_min_samples: int = 2,
+        curator_dbscan_similarity_threshold: float = 0.90,
         delete_harmful_margin: int = 4,
         delete_min_harmful: int = 3,
+        prune_unused_bullets: bool = False,
+        prune_unused_interval: int = 50,
         use_rae: bool = False,
         rae_top_k: int = 10,
         rae_retrieval_mode: str = "semantic",
@@ -87,6 +91,9 @@ class ACE:
             use_curator_create_meta: Enable Curator CREATE_META operations only.
             use_dbscan_merge: Run BulletpointAnalyzer DBSCAN hygiene merge after curation.
             use_dbscan_merge_candidates: Use DBSCAN only to propose candidate groups to Curator MERGE.
+            prune_unused_bullets: Periodically remove bullets with zero helpful and harmful evidence.
+            prune_unused_interval: Run unused-bullet pruning every N training samples.
+                                   Lifecycle Curator enables this by default.
             use_rae: Enable Retrieval-Augmented Execution at the Generator (Top-K bullet retrieval)
             rae_top_k: Number of Top-K bullets to retrieve per query when RAE is enabled
             rae_retrieval_mode: ``semantic`` retrieval or the deterministic
@@ -133,8 +140,15 @@ class ACE:
         self.use_dbscan_merge_candidates = use_dbscan_merge_candidates
         self.dbscan_eps = dbscan_eps
         self.dbscan_min_samples = dbscan_min_samples
+        if not 0.0 <= curator_dbscan_similarity_threshold <= 1.0:
+            raise ValueError("curator_dbscan_similarity_threshold must be between 0 and 1")
+        self.curator_dbscan_similarity_threshold = curator_dbscan_similarity_threshold
         self.delete_harmful_margin = delete_harmful_margin
         self.delete_min_harmful = delete_min_harmful
+        self.prune_unused_bullets = prune_unused_bullets or use_lifecycle_curator
+        if self.prune_unused_bullets and prune_unused_interval <= 0:
+            raise ValueError("prune_unused_interval must be positive when prune_unused_bullets is enabled")
+        self.prune_unused_interval = prune_unused_interval
         
         if self.use_bulletpoint_hygiene or "MERGE" in self.curator_allowed_operations:
             self.bulletpoint_analyzer = BulletpointAnalyzer(
@@ -228,7 +242,7 @@ class ACE:
             playbook=self.playbook,
             threshold=self.bulletpoint_analyzer_threshold,
             clustering="dbscan" if self.use_dbscan_merge_candidates else "pairwise",
-            dbscan_eps=self.dbscan_eps,
+            dbscan_eps=1.0 - self.curator_dbscan_similarity_threshold,
             dbscan_min_samples=self.dbscan_min_samples,
             log_dir=log_dir,
             call_id=f"{call_id}_merge_candidates",
@@ -1399,6 +1413,35 @@ class ACE:
                     **tracking_dict
                 }
                 pre_train_post_train_results.append(pre_train_post_train_result)
+
+                global_step = (epoch - 1) * len(train_samples) + step
+                if (
+                    self.prune_unused_bullets
+                    and global_step % self.prune_unused_interval == 0
+                ):
+                    playbook_before_prune = self.playbook
+                    self.playbook, pruned_bullet_ids = prune_zero_evidence_bullets(self.playbook)
+                    if pruned_bullet_ids:
+                        print(
+                            f"🧹 Pruned {len(pruned_bullet_ids)} unused bullets at "
+                            f"global step {global_step}"
+                        )
+                        if self.use_rae and self.playbook_retriever:
+                            self.playbook_retriever.update_index(self.playbook)
+                    log_playbook_hygiene(
+                        Path(log_dir).parent if log_dir else None,
+                        {
+                            "event": "unused_bullet_prune",
+                            "epoch": epoch,
+                            "step": step,
+                            "global_step": global_step,
+                            "interval": self.prune_unused_interval,
+                            "pruned_bullet_ids": pruned_bullet_ids,
+                            "pruned_count": len(pruned_bullet_ids),
+                            "playbook_changed": self.playbook != playbook_before_prune,
+                            "remaining_bullets": get_playbook_stats(self.playbook)["total_bullets"],
+                        },
+                    )
                 
                 # Save intermediate playbook
                 if step % save_steps == 0:

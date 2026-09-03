@@ -93,6 +93,21 @@ def update_bullet_counts(playbook_text, bullet_tags):
     return '\n'.join(updated_lines)
 
 
+def prune_zero_evidence_bullets(playbook_text):
+    """Remove bullets that have never received helpful or harmful evidence."""
+    retained_lines = []
+    pruned_bullet_ids = []
+
+    for line in playbook_text.split('\n'):
+        parsed = parse_playbook_line(line)
+        if parsed and parsed['helpful'] == 0 and parsed['harmful'] == 0:
+            pruned_bullet_ids.append(parsed['id'])
+            continue
+        retained_lines.append(line)
+
+    return '\n'.join(retained_lines), pruned_bullet_ids
+
+
 def apply_curator_operations(playbook_text, operations, next_id):
     """
     Apply curator operations to playbook

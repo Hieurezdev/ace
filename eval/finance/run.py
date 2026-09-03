@@ -101,9 +101,15 @@ def parse_args():
     parser.add_argument("--use_dbscan_merge_candidates", action="store_true",
                         help="Use DBSCAN only to propose candidate groups to Curator MERGE")
     parser.add_argument("--dbscan_eps", type=float, default=0.12,
-                        help="Maximum cosine distance inside a DBSCAN merge cluster (default: 0.12)")
+                        help="Maximum cosine distance for automatic DBSCAN BulletpointAnalyzer hygiene (default: 0.12)")
     parser.add_argument("--dbscan_min_samples", type=int, default=2,
                         help="Minimum bullets needed for a DBSCAN merge cluster (default: 2)")
+    parser.add_argument("--curator_dbscan_similarity_threshold", type=float, default=0.90,
+                        help="Minimum direct cosine similarity for DBSCAN Curator MERGE candidates (default: 0.90)")
+    parser.add_argument("--prune_unused_bullets", action="store_true",
+                        help="Every N training samples, remove bullets with helpful=0 and harmful=0")
+    parser.add_argument("--prune_unused_interval", type=int, default=50,
+                        help="Run unused-bullet pruning every N training samples (enabled by --prune_unused_bullets or --use_lifecycle_curator)")
 
     # RAE configuration
     rae_group = parser.add_mutually_exclusive_group()
@@ -365,6 +371,9 @@ def main():
         use_dbscan_merge_candidates=args.use_dbscan_merge_candidates,
         dbscan_eps=args.dbscan_eps,
         dbscan_min_samples=args.dbscan_min_samples,
+        curator_dbscan_similarity_threshold=args.curator_dbscan_similarity_threshold,
+        prune_unused_bullets=args.prune_unused_bullets,
+        prune_unused_interval=args.prune_unused_interval,
         use_rae=(args.use_rae or args.use_random_rae),
         rae_top_k=args.rae_top_k,
         rae_retrieval_mode=("random" if args.use_random_rae else "semantic"),
@@ -418,6 +427,9 @@ def main():
         'use_dbscan_merge_candidates': args.use_dbscan_merge_candidates,
         'dbscan_eps': args.dbscan_eps,
         'dbscan_min_samples': args.dbscan_min_samples,
+        'curator_dbscan_similarity_threshold': args.curator_dbscan_similarity_threshold,
+        'prune_unused_bullets': (args.prune_unused_bullets or args.use_lifecycle_curator),
+        'prune_unused_interval': args.prune_unused_interval,
         'use_rae': (args.use_rae or args.use_random_rae),
         'rae_top_k': args.rae_top_k,
         'rae_retrieval_mode': ("random" if args.use_random_rae else "semantic"),

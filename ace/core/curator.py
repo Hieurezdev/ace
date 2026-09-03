@@ -66,6 +66,29 @@ class Curator:
                     "content": content,
                 })
         return sorted(candidates, key=lambda item: item["harmful_margin"], reverse=True)[:limit]
+
+    @staticmethod
+    def _filter_evidence_backed_deletes(
+        operations: List[Dict[str, Any]],
+        delete_candidates: List[Dict[str, Any]],
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, str]]]:
+        """Keep DELETE operations only for counter-qualified audit candidates."""
+        eligible_ids = {candidate["target_id"] for candidate in delete_candidates}
+        accepted_operations = []
+        rejected_operations = []
+        for operation in operations:
+            if operation.get("type") != "DELETE":
+                accepted_operations.append(operation)
+                continue
+            target_id = str(operation.get("target_id", ""))
+            if target_id in eligible_ids:
+                accepted_operations.append(operation)
+            else:
+                rejected_operations.append({
+                    "target_id": target_id,
+                    "reason": "insufficient_counter_evidence",
+                })
+        return accepted_operations, rejected_operations
     
     def curate(
         self,
@@ -169,7 +192,8 @@ helpful` margin. Verify from the reflection that the rule itself caused the
 failure, rather than merely being retrieved or misapplied. If confirmed
 harmful, obsolete, or contradicted, emit `DELETE` for that exact `target_id`
 with evidence in `reason`. Retain it if causality is not established: counters
-alone are not proof. Do not add a duplicate replacement rule.
+alone are not proof. Do not add a duplicate replacement rule. Do not emit
+`DELETE` for any rule outside this candidate list.
 
 """ + json.dumps(audit_pairs, ensure_ascii=False)
 
@@ -212,6 +236,25 @@ near-duplicate rule. Retain a group only when its rules are materially distinct.
             )
             
             operations = operations_info["operations"]
+            if "DELETE" in allowed_operations:
+                operations, rejected_deletes = self._filter_evidence_backed_deletes(
+                    operations,
+                    delete_candidates,
+                )
+                if rejected_deletes:
+                    log_playbook_hygiene(Path(log_dir).parent if log_dir else None, {
+                        "event": "delete_operations_rejected",
+                        "call_id": call_id,
+                        "step": current_step,
+                        "reason": "insufficient_counter_evidence",
+                        "harmful_margin_threshold": delete_harmful_margin,
+                        "min_harmful_threshold": delete_min_harmful,
+                        "rejected_operations": rejected_deletes,
+                    })
+                    print(
+                        f"⏭️  Rejected {len(rejected_deletes)} DELETE operations "
+                        "without sufficient counter evidence"
+                    )
             print(f"✅ Curator JSON schema validated successfully: {len(operations)} operations")
             
             # Log detailed diff for each operation before applying
