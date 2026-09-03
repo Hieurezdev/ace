@@ -41,7 +41,10 @@ for task_name in formula finer_0.5; do
   # Every individual-operation run retains legacy ADD; only the named lifecycle
   # operation is added, which isolates its contribution against ACE's baseline.
   run_experiment "$task_name" update --use_curator_update
-  run_experiment "$task_name" delete --use_curator_delete
+  run_experiment "$task_name" delete_prune \
+    --use_curator_delete \
+    --prune_unused_bullets \
+    --prune_unused_interval 50
   run_experiment "$task_name" merge \
     --use_curator_merge \
     --use_dbscan_merge_candidates
