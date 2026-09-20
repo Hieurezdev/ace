@@ -109,6 +109,7 @@ class PlaybookRetriever:
         self._bullets: List[Dict[str, Any]] = []
         self._section_headers: List[str] = []   # kept to wrap output playbook
         self._raw_playbook: str = ""
+        self._embedding_cache: Dict[str, np.ndarray] = {}
 
         if not RAE_AVAILABLE and retrieval_mode == "semantic":
             print("⚠️  PlaybookRetriever initialized but dependencies not available — "
@@ -199,7 +200,15 @@ class PlaybookRetriever:
             return
 
         contents = [b['content'] for b in self._bullets]
-        embeddings = self._encode(contents)  # (N, dim)
+
+        # Check cache and encode only missing contents
+        to_encode = [c for c in contents if c not in self._embedding_cache]
+        if to_encode:
+            new_embeddings = self._encode(to_encode)
+            for content, emb in zip(to_encode, new_embeddings):
+                self._embedding_cache[content] = emb
+
+        embeddings = np.stack([self._embedding_cache[c] for c in contents])
 
         # Build an inner-product index (cosine sim after L2 norm)
         index = faiss.IndexFlatIP(self.embedding_dim)
@@ -207,7 +216,8 @@ class PlaybookRetriever:
         self._index = index
 
         print(f"[RAE] Index built: {len(self._bullets)} bullets indexed "
-              f"(model={self.embedding_model_name}, dim={self.embedding_dim})")
+              f"(cached: {len(contents) - len(to_encode)}, new: {len(to_encode)}, "
+              f"model={self.embedding_model_name}, dim={self.embedding_dim})")
 
     def retrieve(self, query: str, top_k: Optional[int] = None) -> str:
         """

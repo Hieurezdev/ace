@@ -181,6 +181,39 @@ class VerifiedFailureMemoryTests(unittest.TestCase):
             self.assertEqual(snapshot[0]["failure_id"], failure_id)
             self.assertTrue(snapshot[0]["curator_applied"])
 
+    def test_resumes_failures_from_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log_dir = Path(directory) / "detailed_llm_logs"
+
+            # 1. Create a bank, add a failure, and persist it
+            bank1 = self.make_bank()
+            bank1.set_log_dir(str(log_dir), task_name="formula")
+            failure_id = bank1.add_verified(
+                question="Calculate NPV",
+                predicted_answer="100",
+                ground_truth="90",
+                error_identification="discount omitted",
+                root_cause="rate conversion",
+                key_insight="normalize rate",
+                verification={"verified": True, "confidence": 1.0},
+                evidence=["ground_truth=90", "observed_answer=100"],
+                source="finance",
+            )
+            self.assertEqual(bank1.size, 1)
+
+            # 2. Create a new bank instance, set same log dir. It should auto-load the snapshot!
+            bank2 = self.make_bank()
+            bank2.set_log_dir(str(log_dir), task_name="formula")
+
+            # Verify size, content, next_id and retrieval index are correctly restored
+            self.assertEqual(bank2.size, 1)
+            self.assertEqual(bank2.entries[0]["failure_id"], failure_id)
+            self.assertEqual(bank2._next_id, 2)
+
+            # Verify retrieving using rebuilt index works
+            results = bank2.retrieve("NPV discount", top_k=1)
+            self.assertEqual(results[0]["failure_id"], failure_id)
+
 
 if __name__ == "__main__":
     unittest.main()
