@@ -87,6 +87,50 @@ class FailureMemoryBank:
         self._snapshot_path = os.path.join(
             os.path.dirname(log_dir), "failure_memory_v2.jsonl"
         )
+
+        # Load past failures from snapshot if it exists (resume run support)
+        if os.path.exists(self._snapshot_path):
+            try:
+                loaded_entries = []
+                texts_to_encode = []
+                with open(self._snapshot_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line:
+                            entry = json.loads(line)
+                            loaded_entries.append(entry)
+                            if self.mode == "verified":
+                                txt = "\n".join(
+                                    filter(None, [
+                                        entry.get("question", ""),
+                                        entry.get("error_identification", ""),
+                                        entry.get("root_cause", ""),
+                                        entry.get("key_insight", "")
+                                    ])
+                                )
+                            else:
+                                txt = entry.get("question", "")
+                            texts_to_encode.append(txt)
+
+                if loaded_entries:
+                    print(f"[FailureMemory] Loading {len(loaded_entries)} past failures from snapshot...")
+                    embeddings = self._encode(texts_to_encode)
+                    if embeddings is not None:
+                        for entry, emb in zip(loaded_entries, embeddings):
+                            entry["_emb"] = emb
+                        self._entries = loaded_entries
+                        max_id = 0
+                        for entry in self._entries:
+                            fid = entry.get("failure_id", "")
+                            m = re.match(r"fmb-(\d+)", fid)
+                            if m:
+                                max_id = max(max_id, int(m.group(1)))
+                        self._next_id = max_id + 1
+                        self._rebuild_index()
+                        print(f"[FailureMemory] Successfully loaded and indexed {len(self._entries)} failures from snapshot.")
+            except Exception as e:
+                print(f"Warning: Failed to load failure memory snapshot: {e}")
+
         self._log_event(
             "initialized",
             {
