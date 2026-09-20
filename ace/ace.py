@@ -215,25 +215,51 @@ class ACE:
         if self.use_rae and self.playbook_retriever:
             self.playbook_retriever.update_index(self.playbook)
 
-        # Initialize FailureMemoryBank (Analogical Reflection)
-        # Shares the BGE-M3 encoder with PlaybookRetriever when RAE is enabled
-        # so only one copy of the model is loaded.
+        # Initialize source-isolated FailureMemoryBanks (Analogical Reflection).
+        # Both banks keep the configured top-k. Separating real and adversarial
+        # failures prevents synthetic attacks from leaking into standard
+        # reflections (and vice versa).
         self.use_failure_memory = use_failure_memory
         self.failure_memory_top_k = failure_memory_top_k
         if use_failure_memory:
             shared_encoder = self.playbook_retriever.encode if self.use_rae and self.playbook_retriever else None
-            self.failure_memory = FailureMemoryBank(
+            self.real_failure_memory = FailureMemoryBank(
                 encoder=shared_encoder,
                 top_k=failure_memory_top_k,
                 mode=failure_memory_mode,
             )
-            src = "shared BGE-M3 from RAE" if shared_encoder is not None else "standalone BGE-M3"
+            adversarial_encoder = shared_encoder or self.real_failure_memory._encode
+            self.adversarial_failure_memory = FailureMemoryBank(
+                encoder=adversarial_encoder,
+                top_k=failure_memory_top_k,
+                mode=failure_memory_mode,
+            )
+            # Backwards-compatible alias for callers that inspect the original
+            # public attribute. All standard samples route through this bank.
+            self.failure_memory = self.real_failure_memory
+            src = (
+                "shared BGE-M3 from RAE"
+                if shared_encoder is not None
+                else "shared standalone BGE-M3"
+            )
             print(
-                f"✓ FailureMemoryBank initialized (mode={failure_memory_mode}, "
+                f"✓ Source-isolated FailureMemoryBanks initialized (mode={failure_memory_mode}, "
                 f"top_k={failure_memory_top_k}, encoder={src})"
             )
         else:
+            self.real_failure_memory = None
+            self.adversarial_failure_memory = None
             self.failure_memory = None
+
+    def _get_real_failure_memory(self):
+        """Return the standard-data memory while preserving old integrations."""
+        return getattr(self, "real_failure_memory", None) or getattr(
+            self, "failure_memory", None
+        )
+
+    def _get_adversarial_failure_memory(self):
+        """Return the adversarial-only memory without falling back to real data."""
+        return getattr(self, "adversarial_failure_memory", None)
     
     def _get_curator_merge_candidates(self, log_dir, call_id):
         if "MERGE" not in self.curator_allowed_operations or not self.bulletpoint_analyzer:
@@ -456,8 +482,16 @@ class ACE:
                 save_dir, task_name, mode, resume_run_path=resume_run_path
             )
 
-        if self.failure_memory is not None:
-            self.failure_memory.set_log_dir(log_dir, task_name=task_name)
+        real_failure_memory = self._get_real_failure_memory()
+        if real_failure_memory is not None:
+            real_failure_memory.set_log_dir(log_dir, task_name=task_name)
+
+        adversarial_failure_memory = self._get_adversarial_failure_memory()
+        if adversarial_failure_memory is not None:
+            adversarial_failure_memory.set_log_dir(
+                os.path.join(log_dir, "adversarial_failure_memory", "events"),
+                task_name=f"{task_name}:adversarial",
+            )
         
         # Save configuration
         config_path = os.path.join(save_path, "run_config.json")
@@ -812,7 +846,7 @@ class ACE:
                 use_json_mode=use_json_mode,
                 call_id=f"{step_id}_adv_reflect",
                 log_dir=log_dir,
-                failure_memory=self.failure_memory,
+                failure_memory=self._get_adversarial_failure_memory(),
             )
             log_adversarial_episode(log_dir, {
                 **episode_meta,
@@ -832,45 +866,6 @@ class ACE:
                 self.playbook = update_bullet_counts(
                     self.playbook, bullet_tags
                 )
-
-            if self.failure_memory is not None and reflection_content not in ("(empty)", ""):
-                try:
-                    parsed = json.loads(reflection_content) if isinstance(reflection_content, str) else {}
-                except (json.JSONDecodeError, TypeError):
-                    parsed = {}
-                if self.failure_memory.mode == "verified":
-                    failure_memory_id = self.failure_memory.add_verified(
-                        question=adv_question,
-                        predicted_answer=adv_answer,
-                        ground_truth=adv_target,
-                        error_identification=parsed.get("error_identification", ""),
-                        root_cause=parsed.get("root_cause_analysis", ""),
-                        key_insight=parsed.get("key_insight", ""),
-                        verification={
-                            "verified": not is_legacy_adversarial,
-                            "confidence": verifier_confidence,
-                            "oracle_type": "adversarial_verifier",
-                        },
-                        evidence=[
-                            f"verified_target={adv_target}",
-                            f"observed_answer={adv_answer}",
-                            f"selection_score={selection_score}",
-                        ],
-                        source="adversarial",
-                        task_id=step_id,
-                        playbook_refs=list(adv_bullet_ids),
-                        vulnerability_id=attack.get("vulnerability_id", ""),
-                        candidate_id=candidate_id,
-                    )
-                else:
-                    failure_memory_id = self.failure_memory.add(
-                        question=adv_question,
-                        predicted_answer=adv_answer,
-                        ground_truth=adv_target,
-                        error_identification=parsed.get("error_identification", ""),
-                        root_cause=parsed.get("root_cause_analysis", ""),
-                        key_insight=parsed.get("key_insight", ""),
-                    )
 
             print("--- Running Curator for Adversarial Report ---")
             stats = get_playbook_stats(self.playbook)
@@ -906,17 +901,61 @@ class ACE:
                 delete_min_harmful=self.delete_min_harmful,
                 merge_candidates=self._get_curator_merge_candidates(log_dir, f"{step_id}_adv_curate"),
             )
-            if self.failure_memory is not None and self.failure_memory.mode == "verified":
-                self.failure_memory.record_curator_result(
-                    failure_memory_id,
-                    curator_operations,
-                    applied=bool(curator_operations),
-                )
+            curator_applied = any(
+                operation.get("_execution_status", "applied") == "applied"
+                for operation in curator_operations
+            )
+            # A failed attack takes exactly one learning path: either Curator
+            # updates the playbook now, or the unresolved failure is retained
+            # in M_adv for a later adversarial reflection, never both.
+            adversarial_failure_memory = self._get_adversarial_failure_memory()
+            if (
+                adversarial_failure_memory is not None
+                and not curator_applied
+                and reflection_content not in ("(empty)", "")
+            ):
+                try:
+                    parsed = json.loads(reflection_content) if isinstance(reflection_content, str) else {}
+                except (json.JSONDecodeError, TypeError):
+                    parsed = {}
+                if adversarial_failure_memory.mode == "verified":
+                    failure_memory_id = adversarial_failure_memory.add_verified(
+                        question=adv_question,
+                        predicted_answer=adv_answer,
+                        ground_truth=adv_target,
+                        error_identification=parsed.get("error_identification", ""),
+                        root_cause=parsed.get("root_cause_analysis", ""),
+                        key_insight=parsed.get("key_insight", ""),
+                        verification={
+                            "verified": not is_legacy_adversarial,
+                            "confidence": verifier_confidence,
+                            "oracle_type": "adversarial_verifier",
+                        },
+                        evidence=[
+                            f"verified_target={adv_target}",
+                            f"observed_answer={adv_answer}",
+                            f"selection_score={selection_score}",
+                        ],
+                        source="adversarial",
+                        task_id=step_id,
+                        playbook_refs=list(adv_bullet_ids),
+                        vulnerability_id=attack.get("vulnerability_id", ""),
+                        candidate_id=candidate_id,
+                    )
+                else:
+                    failure_memory_id = adversarial_failure_memory.add(
+                        question=adv_question,
+                        predicted_answer=adv_answer,
+                        ground_truth=adv_target,
+                        error_identification=parsed.get("error_identification", ""),
+                        root_cause=parsed.get("root_cause_analysis", ""),
+                        key_insight=parsed.get("key_insight", ""),
+                    )
             log_adversarial_episode(log_dir, {
                 **episode_meta,
                 "event": "curator_result",
                 "pipeline": adversarial_pipeline,
-                "status": "completed" if curator_operations else "completed_no_operations",
+                "status": "completed" if curator_applied else "completed_no_operations",
                 "candidate_id": candidate_id,
                 "operations": curator_operations,
                 "playbook_stats_before": stats,
@@ -1047,6 +1086,7 @@ class ACE:
         token_budget = config_params['token_budget']
         use_json_mode = config_params['use_json_mode']
         no_ground_truth = config_params['no_ground_truth']
+        real_failure_memory = self._get_real_failure_memory()
         
         # Extract sample data
         question = task_dict.get("question", "")
@@ -1070,6 +1110,7 @@ class ACE:
         final_answer = extract_answer(gen_response)
         is_correct = data_processor.answer_is_correct(final_answer, target)
         pre_train_answer = final_answer
+        pre_train_was_correct = is_correct
         
         print(f"Correct: {is_correct}")
         
@@ -1114,7 +1155,7 @@ class ACE:
                     use_json_mode=use_json_mode,
                     call_id=f"{step_id}_round_{round_num}",
                     log_dir=log_dir,
-                    failure_memory=self.failure_memory,
+                    failure_memory=real_failure_memory,
                 )
                 
                 # Update bullet counts
@@ -1143,13 +1184,13 @@ class ACE:
                     break
 
             # Store distilled insights from the last reflection into memory
-            if self.failure_memory is not None and reflection_content not in ("(empty)", ""):
+            if real_failure_memory is not None and reflection_content not in ("(empty)", ""):
                 try:
                     parsed = json.loads(reflection_content) if isinstance(reflection_content, str) else {}
                 except (json.JSONDecodeError, TypeError):
                     parsed = {}
-                if self.failure_memory.mode == "verified":
-                    failure_memory_id = self.failure_memory.add_verified(
+                if real_failure_memory.mode == "verified":
+                    failure_memory_id = real_failure_memory.add_verified(
                         question=question,
                         predicted_answer=pre_train_answer,
                         ground_truth=target,
@@ -1170,7 +1211,7 @@ class ACE:
                         playbook_refs=list(bullet_ids),
                     )
                 else:
-                    failure_memory_id = self.failure_memory.add(
+                    failure_memory_id = real_failure_memory.add(
                         question=question,
                         predicted_answer=pre_train_answer,
                         ground_truth=target,
@@ -1211,8 +1252,9 @@ class ACE:
                            reflection_content=reflection_content,
                            is_correct=is_correct)
         
-        # STEP 3: Curator - Periodically update playbook
-        if step % curator_frequency == 0:
+        # STEP 3: Only failures may change playbook content. Correct samples
+        # still update helpful/harmful counters above.
+        if not pre_train_was_correct and step % curator_frequency == 0:
             print(f"\n--- Running Curator at step {step} ---")
             
             stats = get_playbook_stats(self.playbook)
@@ -1235,8 +1277,8 @@ class ACE:
                 delete_min_harmful=self.delete_min_harmful,
                 merge_candidates=self._get_curator_merge_candidates(log_dir, step_id),
             )
-            if self.failure_memory is not None and self.failure_memory.mode == "verified":
-                self.failure_memory.record_curator_result(
+            if real_failure_memory is not None and real_failure_memory.mode == "verified":
+                real_failure_memory.record_curator_result(
                     failure_memory_id,
                     operations,
                     applied=bool(operations),
