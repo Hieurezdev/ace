@@ -1,0 +1,313 @@
+{
+  "test_results": {
+    "accuracy": 0.7,
+    "correct": 140,
+    "total": 200,
+    "no_answer": 6
+  },
+  "error_log": {
+    "accuracy": 0.7,
+    "errors": [
+      {
+        "index": 0,
+        "prediction": "0.15",
+        "ground_truth": "15.0"
+      },
+      {
+        "index": 1,
+        "prediction": "133.33",
+        "ground_truth": "40.0"
+      },
+      {
+        "index": 6,
+        "prediction": "637.1",
+        "ground_truth": "637.07"
+      },
+      {
+        "index": 8,
+        "prediction": "0.15",
+        "ground_truth": "15.0"
+      },
+      {
+        "index": 7,
+        "prediction": "15443.34",
+        "ground_truth": "11717.85"
+      },
+      {
+        "index": 14,
+        "prediction": "0.48",
+        "ground_truth": "0.47"
+      },
+      {
+        "index": 13,
+        "prediction": "0.25",
+        "ground_truth": "25.0"
+      },
+      {
+        "index": 19,
+        "prediction": "82247.39",
+        "ground_truth": "89606.94"
+      },
+      {
+        "index": 29,
+        "prediction": "undefined",
+        "ground_truth": "18.45"
+      },
+      {
+        "index": 28,
+        "prediction": "37301.49",
+        "ground_truth": "37161.62"
+      },
+      {
+        "index": 36,
+        "prediction": "0.38",
+        "ground_truth": "37.5"
+      },
+      {
+        "index": 40,
+        "prediction": "0.08",
+        "ground_truth": "0.07"
+      },
+      {
+        "index": 41,
+        "prediction": "0.37",
+        "ground_truth": "37.14"
+      },
+      {
+        "index": 34,
+        "prediction": "0.0",
+        "ground_truth": "94.29"
+      },
+      {
+        "index": 42,
+        "prediction": "151108.0",
+        "ground_truth": "147651.39"
+      },
+      {
+        "index": 37,
+        "prediction": "-0.17",
+        "ground_truth": "18.45"
+      },
+      {
+        "index": 48,
+        "prediction": "0.07",
+        "ground_truth": "6.63"
+      },
+      {
+        "index": 55,
+        "prediction": "974.49",
+        "ground_truth": "15092.44"
+      },
+      {
+        "index": 57,
+        "prediction": "-30.39",
+        "ground_truth": "69.49"
+      },
+      {
+        "index": 51,
+        "prediction": "No final answer found",
+        "ground_truth": "1.5"
+      },
+      {
+        "index": 64,
+        "prediction": "4250.0",
+        "ground_truth": "4250000000000.0"
+      },
+      {
+        "index": 65,
+        "prediction": "0.25",
+        "ground_truth": "25.0"
+      },
+      {
+        "index": 70,
+        "prediction": "100000000.0",
+        "ground_truth": "-100000000.0"
+      },
+      {
+        "index": 68,
+        "prediction": "18814.92",
+        "ground_truth": "18761.26"
+      },
+      {
+        "index": 72,
+        "prediction": "0.2",
+        "ground_truth": "20.0"
+      },
+      {
+        "index": 77,
+        "prediction": "0.2",
+        "ground_truth": "20.0"
+      },
+      {
+        "index": 74,
+        "prediction": "No final answer found",
+        "ground_truth": "0.01"
+      },
+      {
+        "index": 87,
+        "prediction": "136842.11",
+        "ground_truth": "2600000.0"
+      },
+      {
+        "index": 90,
+        "prediction": "0.33",
+        "ground_truth": "33.33"
+      },
+      {
+        "index": 84,
+        "prediction": "No final answer found",
+        "ground_truth": "0.0"
+      },
+      {
+        "index": 94,
+        "prediction": "327.25",
+        "ground_truth": "326.04"
+      },
+      {
+        "index": 98,
+        "prediction": "1.39",
+        "ground_truth": "260000.0"
+      },
+      {
+        "index": 95,
+        "prediction": "0.05",
+        "ground_truth": "5.45"
+      },
+      {
+        "index": 104,
+        "prediction": "0.097",
+        "ground_truth": "0.1"
+      },
+      {
+        "index": 107,
+        "prediction": "1350000000.0",
+        "ground_truth": "1150000000.0"
+      },
+      {
+        "index": 118,
+        "prediction": "820000000.0",
+        "ground_truth": "690000000.0"
+      },
+      {
+        "index": 116,
+        "prediction": "0.17",
+        "ground_truth": "0.18"
+      },
+      {
+        "index": 122,
+        "prediction": "124923.0",
+        "ground_truth": "125482.47"
+      },
+      {
+        "index": 121,
+        "prediction": "0.3",
+        "ground_truth": "30.0"
+      },
+      {
+        "index": 139,
+        "prediction": "0.07",
+        "ground_truth": "6.67"
+      },
+      {
+        "index": 146,
+        "prediction": "500.00",
+        "ground_truth": "-1499.76"
+      },
+      {
+        "index": 145,
+        "prediction": "0.1",
+        "ground_truth": "9.6"
+      },
+      {
+        "index": 142,
+        "prediction": "a plain floating-point number with two decimal places",
+        "ground_truth": "7600.0"
+      },
+      {
+        "index": 153,
+        "prediction": "0.2",
+        "ground_truth": "20.0"
+      },
+      {
+        "index": 152,
+        "prediction": "66682.0",
+        "ground_truth": "9615.38"
+      },
+      {
+        "index": 159,
+        "prediction": "1.62",
+        "ground_truth": "1.64"
+      },
+      {
+        "index": 156,
+        "prediction": "No final answer found",
+        "ground_truth": "0.03"
+      },
+      {
+        "index": 167,
+        "prediction": "230.32",
+        "ground_truth": "2297.17"
+      },
+      {
+        "index": 165,
+        "prediction": "36.07",
+        "ground_truth": "35.71"
+      },
+      {
+        "index": 176,
+        "prediction": "0.05",
+        "ground_truth": "5.0"
+      },
+      {
+        "index": 173,
+        "prediction": "14.27",
+        "ground_truth": "14.14"
+      },
+      {
+        "index": 184,
+        "prediction": "61024.08",
+        "ground_truth": "61027.09"
+      },
+      {
+        "index": 178,
+        "prediction": "No final answer found",
+        "ground_truth": "107.61"
+      },
+      {
+        "index": 193,
+        "prediction": "40000.0",
+        "ground_truth": "30000.0"
+      },
+      {
+        "index": 195,
+        "prediction": "0.1",
+        "ground_truth": "10.0"
+      },
+      {
+        "index": 191,
+        "prediction": "10.63",
+        "ground_truth": "10.61"
+      },
+      {
+        "index": 197,
+        "prediction": "133221.96",
+        "ground_truth": "133735.27"
+      },
+      {
+        "index": 194,
+        "prediction": "0.4",
+        "ground_truth": "40.0"
+      },
+      {
+        "index": 196,
+        "prediction": "6.93",
+        "ground_truth": "6.9"
+      },
+      {
+        "index": 199,
+        "prediction": "No final answer found",
+        "ground_truth": "0.77"
+      }
+    ]
+  }
+}
