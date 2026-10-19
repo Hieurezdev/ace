@@ -3,6 +3,35 @@ Curator prompts for ACE system.
 """
 
 # Curator prompt for intelligent playbook management
+BUDGET_MAINTENANCE_PROMPT = """Maintain ONE canonical Playbook, not a query-specific subset.
+The proposed update is {actual_tokens} tokens; its hard limit is {token_budget}.
+Reduce at least {excess_tokens} tokens using LOCAL operations on the candidate.
+Do not output a replacement Playbook, truncate text, or add new rules/sections.
+UPDATE: remove verbose explanations while preserving the rule's applicability,
+conditions, exceptions, units, formulas, and output constraints.
+MERGE: consolidate truly redundant rules; preserve all distinct valid conditions.
+Semantic similarity alone does not prove equivalence. Do not merge contradictions
+into one unconditional rule. Do not invent evidence or alter execution counters.
+DELETE is allowed ONLY if enabled below AND the target is in the supplied audit
+list AND there is an evidence-based reason. Budget pressure is not such a reason.
+Prefer preserving useful rare rules over fitting the budget. If no safe local
+maintenance is available, return an empty operations list; code will roll back.
+
+{operation_schema}
+
+DELETE audit candidates:
+{delete_candidates}
+
+Recent task evidence (may be empty for counter or hygiene maintenance):
+{recent_reflection}
+
+Candidate Playbook (including the newly proposed insights):
+{candidate}
+
+Return only JSON with "reasoning" (a SHORT evidence-based rationale) and
+"operations". Never output a full Playbook or a detailed reasoning trace.
+"""
+
 CURATOR_PROMPT = """You are a master curator of knowledge. Your job is to identify what new insights should be added to an existing playbook based on a reflection from a previous attempt.
 
 **Context:**

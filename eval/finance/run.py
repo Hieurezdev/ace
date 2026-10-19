@@ -66,6 +66,12 @@ def parse_args():
                         help="Max tokens for LLM responses")
     parser.add_argument("--playbook_token_budget", type=int, default=80000,
                         help="Total token budget for playbook")
+    parser.add_argument("--use_budgeted_curator", action="store_true",
+                        help="Enforce a hard canonical Playbook budget at write time; repair or roll back overflowing updates")
+    parser.add_argument("--playbook_tokenizer", type=str, default=None,
+                        help="Hugging Face tokenizer ID or local directory for hard budget counting (default: generator_model)")
+    parser.add_argument("--budget_repair_attempts", type=int, default=2,
+                        help="Maximum local Curator maintenance calls per overflowing update")
     parser.add_argument("--test_workers", type=int, default=20,
                         help="Number of parallel workers for testing")
     parser.add_argument("--track_generation_latency", action="store_true",
@@ -281,6 +287,14 @@ def main():
     """Main execution function."""
     args = parse_args()
 
+    if args.use_budgeted_curator:
+        if args.playbook_token_budget <= 0 or args.budget_repair_attempts < 0:
+            raise ValueError("Hard Playbook budget must be positive; repair attempts must be nonnegative")
+        if args.use_rae or args.use_random_rae:
+            raise ValueError("Disable RAE: budgeted Curator evaluates a single full canonical Playbook")
+        if args.stress_noise_rate:
+            raise ValueError("Run budgeted curation and stress-noise interventions separately")
+
     if args.track_generation_latency and args.mode != "eval_only":
         raise ValueError("--track_generation_latency is supported only with --mode eval_only")
     if args.use_random_rae and args.mode != "eval_only":
@@ -400,6 +414,9 @@ def main():
         'save_steps': args.save_steps,
         'resume_from_step': args.resume_from_step,
         'playbook_token_budget': args.playbook_token_budget,
+        'use_budgeted_curator': args.use_budgeted_curator,
+        'playbook_tokenizer': args.playbook_tokenizer,
+        'budget_repair_attempts': args.budget_repair_attempts,
         'task_name': args.task_name,
         'mode': args.mode,
         'json_mode': args.json_mode,

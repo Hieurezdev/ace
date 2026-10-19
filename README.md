@@ -256,6 +256,9 @@ uv run python -m eval.finance.run \
 | `--save_steps` | Save intermediate playbooks every N steps | 50 |
 | `--max_tokens` | Maximum tokens for LLM responses | 4096 |
 | `--playbook_token_budget` | Total token budget for playbook | 80000 |
+| `--use_budgeted_curator` | Enforce this budget in code on the canonical Playbook, with local maintenance and rollback | False |
+| `--playbook_tokenizer` | Hugging Face tokenizer ID or local directory for hard-budget counting | Generator model |
+| `--budget_repair_attempts` | Maximum maintenance calls per overflowing write; 0 means reject overflow without repair | 2 |
 | `--test_workers` | Number of parallel workers for testing | 20 |
 | `--seed` | Random seed for reproducibility | 42 |
 | `--generator_model` | Model for generator | `DeepSeek-V3.1` |
@@ -270,6 +273,71 @@ uv run python -m eval.finance.run \
 | `--use_failure_memory` | Enable Analogical Reflection: retrieve similar past failures at reflection time so the Reflector can reason by analogy. Shares the BGE-M3 model with RAE when both are enabled — no extra memory cost | False |
 | `--failure_memory_top_k` | Number of similar past failures to retrieve per reflection step | 3 |
 | `--use_verified_failure_memory` | Enable schema-v2 FMB: verified-only storage, semantic→lexical/usefulness reranking, and Curator-result attachment. Finance runner only initially; the old `--use_failure_memory` remains legacy | False |
+
+### Write-time canonical Playbook budget (finance)
+
+Without `--use_budgeted_curator`, the legacy token budget remains a soft Curator
+instruction. With it, each Curator proposal is a transaction: count the complete
+serialized Playbook using the specified model tokenizer (no model weights),
+then commit only if it fits `--playbook_token_budget`. Overflow triggers local
+`UPDATE`/`MERGE` maintenance on the candidate, including existing rules and newly
+proposed insights. These two maintenance operations are enabled by the budget
+flag independently of normal lifecycle-operation flags. `DELETE` still requires
+its existing flag and counter-qualified evidence; budget pressure is not grounds
+for deletion. No progress or invalid edits stop maintenance early; successful
+partial reductions can continue up to `--budget_repair_attempts` calls.
+
+If maintenance cannot fit the candidate, both the content and next bullet ID
+roll back. The candidate remains archived, but is not automatically replayed or
+used as execution context. Counter updates, BulletpointAnalyzer hygiene, and
+pruning cross the same write boundary. An oversized initial/resume Playbook fails
+early instead of being truncated. Generator also checks the invariant before
+calling the model. This bounds **Playbook tokens**, not the whole request, task
+documents, reflection, output tokens, or the maintenance prompt itself.
+
+This experiment uses one full canonical Playbook, not RAE. Combining its flag
+with RAE or stress-noise injection is rejected to keep interventions separate.
+The hard token bound does not guarantee semantic equivalence, absence of noise,
+or higher accuracy; compare validation/test accuracy and adaptation costs.
+In `eval_only`, the flag only validates the supplied Playbook; it performs no
+reflection or maintenance. A local tokenizer directory avoids downloads.
+
+Run paired legacy/budgeted experiments on Formula and FiNER:
+
+```bash
+bash run_budgeted_curator_ablation.sh
+# Small training smoke run (validation/test splits remain unchanged):
+bash run_budgeted_curator_ablation.sh --max_train_samples 50
+```
+
+Sweep only the budgeted variant over 4,000 / 8,000 / 10,000 tokens:
+
+```bash
+# Preview all 6 runs without calling vLLM or creating result files:
+bash run_playbook_budget_sweep.sh --dry-run
+# Quick training trial; validation/test splits are not reduced:
+bash run_playbook_budget_sweep.sh --max_train_samples 50
+# Customize the budgets and run only Formula:
+TOKEN_BUDGETS="1000 2000 4000 8000" TASKS="formula" \
+  bash run_playbook_budget_sweep.sh --max_train_samples 50
+```
+
+The sweep runs sequentially with the same configuration and seed (42). Each
+run starts with an empty Playbook unless an initial/resume option is explicitly
+passed. Results are separated under
+`results/playbook_budget_sweep/<task>/budget_<tokens>/`; override `RESULTS_ROOT`
+to change that root, or `ACE_MODEL` and `VLLM_BASE_URL` to change serving settings.
+Additional finance-runner arguments are forwarded; use the environment variables
+instead of overriding `--mode`, `--task_name`, `--save_path`, or
+`--playbook_token_budget`. The sweep stops on the first failed run.
+A short training trial may never reach a large budget; inspect overflow and
+maintenance events before interpreting differences as a budget effect.
+
+Each run saves `playbook_budget_events.jsonl` (checks, repairs, commit/rollback)
+and, when overflow occurs, `playbook_budget_candidates.jsonl` (candidate and edit
+provenance). Every additional LLM call is logged separately under
+`detailed_llm_logs/*_budget_repair_*`. No repair calls are hidden in inference
+latency. Existing intermediate/final Playbook files contain committed versions.
 
 Finance FMB ablation flags:
 

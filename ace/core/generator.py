@@ -8,6 +8,7 @@ import re
 from typing import Dict, List, Tuple, Optional, Any
 from ..prompts.generator import GENERATOR_PROMPT
 from llm import timed_llm_call
+from .playbook_budget import PlaybookBudget
 
 
 class Generator:
@@ -30,6 +31,7 @@ class Generator:
         self.api_provider = api_provider
         self.model = model
         self.max_tokens = max_tokens
+        self.playbook_budget: Optional[PlaybookBudget] = None
 
     def generate(
         self,
@@ -69,6 +71,10 @@ class Generator:
             effective_playbook = retriever.retrieve(query)
         else:
             effective_playbook = playbook
+
+        if self.playbook_budget is not None:
+            # Fail before an LLM call if an unsupported mutation bypassed write-time checks.
+            self.playbook_budget.require_within_budget(effective_playbook)
 
         # Format the prompt
         prompt = GENERATOR_PROMPT.format(effective_playbook, reflection, question, context)

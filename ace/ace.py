@@ -17,6 +17,7 @@ from typing import Dict, List, Tuple, Optional, Any
 from .core import Generator, Reflector, Curator, BulletpointAnalyzer, PlaybookRetriever, FailureMemoryBank
 from .core import AdversarialAgent
 from .core.stress_test import corrupt_playbook
+from .core.playbook_budget import PlaybookBudget, load_token_counter
 from playbook_utils import *
 from logger import *
 from utils import *
@@ -248,6 +249,21 @@ class ACE:
             call_id=f"{call_id}_merge_candidates",
         )
 
+    def _count_playbook_tokens(self) -> int:
+        """Use the enforcement tokenizer for budgeted experiment statistics."""
+        budget = self.curator.playbook_budget
+        return budget.count_tokens(self.playbook) if budget is not None else count_tokens(self.playbook)
+
+    def _accept_auxiliary_playbook(self, candidate: str, call_id: str, log_dir: str) -> bool:
+        """Apply the same transaction boundary to counters, pruning, and hygiene."""
+        decision = self.curator.enforce_budget(
+            self.playbook, candidate, self.next_global_id, self.next_global_id,
+            call_id, log_dir, self.curator_allowed_operations,
+            self.delete_harmful_margin, self.delete_min_harmful,
+        )
+        self.playbook, self.next_global_id = decision.playbook, decision.next_global_id
+        return decision.accepted
+
     def _initialize_empty_playbook(self) -> str:
         """Initialize an empty playbook with standard sections."""
         return """## STRATEGIES & INSIGHTS
@@ -440,6 +456,15 @@ class ACE:
         
         # Extract configuration
         config_params = self._extract_config_params(config)
+        self.curator.playbook_budget = None
+        self.generator.playbook_budget = None
+        if config.get('use_budgeted_curator', False):
+            if self.use_rae:
+                raise ValueError("Budgeted Curator uses a full canonical Playbook; disable RAE for this experiment")
+            if config_params['stress_noise_rate']:
+                raise ValueError("Run the budgeted Curator and stress-noise interventions separately")
+            if config_params['token_budget'] <= 0 or config.get('budget_repair_attempts', 2) < 0:
+                raise ValueError("Playbook budget must be positive; repair attempts must be nonnegative")
         task_name = config_params['task_name']
         save_dir = config_params['save_dir']
         resume_run_path = config_params.get('resume_run_path')
@@ -455,6 +480,20 @@ class ACE:
             save_path, usage_log_path, playbook_dir, log_dir = self._setup_paths(
                 save_dir, task_name, mode, resume_run_path=resume_run_path
             )
+
+        if config.get('use_budgeted_curator', False):
+            tokenizer_name = config.get('playbook_tokenizer') or self.generator.model
+            budget = PlaybookBudget(
+                limit=config_params['token_budget'],
+                count_tokens=load_token_counter(tokenizer_name),
+                repair_attempts=config.get('budget_repair_attempts', 2),
+                log_dir=Path(log_dir).parent,
+                tokenizer_name=tokenizer_name,
+            )
+            budget.require_within_budget(self.playbook)
+            self.curator.playbook_budget = budget
+            self.generator.playbook_budget = budget
+            print(f"✓ Hard canonical Playbook budget: {budget.limit} tokens ({tokenizer_name})")
 
         if self.failure_memory is not None:
             self.failure_memory.set_log_dir(log_dir, task_name=task_name)
@@ -829,8 +868,9 @@ class ACE:
             })
 
             if bullet_tags:
-                self.playbook = update_bullet_counts(
-                    self.playbook, bullet_tags
+                self._accept_auxiliary_playbook(
+                    update_bullet_counts(self.playbook, bullet_tags),
+                    f"{step_id}_adv_counters", log_dir,
                 )
 
             if self.failure_memory is not None and reflection_content not in ("(empty)", ""):
@@ -928,7 +968,7 @@ class ACE:
             })
 
             if self.use_bulletpoint_analyzer and self.bulletpoint_analyzer:
-                self.playbook = self.bulletpoint_analyzer.analyze(
+                hygiene_candidate = self.bulletpoint_analyzer.analyze(
                     playbook=self.playbook,
                     threshold=self.bulletpoint_analyzer_threshold,
                     merge=True,
@@ -938,6 +978,7 @@ class ACE:
                     log_dir=log_dir,
                     call_id=f"{step_id}_adv_hygiene",
                 )
+                self._accept_auxiliary_playbook(hygiene_candidate, f"{step_id}_adv_hygiene", log_dir)
 
             if self.use_rae and self.playbook_retriever:
                 self.playbook_retriever.update_index(self.playbook)
@@ -1082,7 +1123,7 @@ class ACE:
             "pre_train_result": {
                 "final_answer": final_answer,
                 "is_correct": is_correct,
-                "playbook_num_tokens": count_tokens(self.playbook),
+                "playbook_num_tokens": self._count_playbook_tokens(),
                 "playbook_length": len(self.playbook)
             }
         }
@@ -1119,8 +1160,9 @@ class ACE:
                 
                 # Update bullet counts
                 if bullet_tags:
-                    self.playbook = update_bullet_counts(
-                        self.playbook, bullet_tags
+                    self._accept_auxiliary_playbook(
+                        update_bullet_counts(self.playbook, bullet_tags),
+                        f"{step_id}_round_{round_num}_counters", log_dir,
                     )
                 
                 # Regenerate with reflection
@@ -1201,8 +1243,9 @@ class ACE:
             
             # Update bullet counts
             if bullet_tags:
-                self.playbook = update_bullet_counts(
-                    self.playbook, bullet_tags
+                self._accept_auxiliary_playbook(
+                    update_bullet_counts(self.playbook, bullet_tags),
+                    f"{step_id}_correct_counters", log_dir,
                 )
             
             # Log with reflection
@@ -1245,7 +1288,7 @@ class ACE:
             # Run bulletpoint analyzer if enabled
             if self.use_bulletpoint_analyzer and self.bulletpoint_analyzer:
                 print(f"  Running BulletpointAnalyzer (threshold={self.bulletpoint_analyzer_threshold})...")
-                self.playbook = self.bulletpoint_analyzer.analyze(
+                hygiene_candidate = self.bulletpoint_analyzer.analyze(
                     playbook=self.playbook,
                     threshold=self.bulletpoint_analyzer_threshold,
                     merge=True,
@@ -1255,6 +1298,7 @@ class ACE:
                     log_dir=log_dir,
                     call_id=f"{step_id}_hygiene",
                 )
+                self._accept_auxiliary_playbook(hygiene_candidate, f"{step_id}_hygiene", log_dir)
 
             # Rebuild RAE index with the updated playbook
             if self.use_rae and self.playbook_retriever:
@@ -1279,7 +1323,7 @@ class ACE:
         tracking_dict["post_train_result"] = {
             "final_answer": final_answer,
             "is_correct": post_train_is_correct,
-            "playbook_num_tokens": count_tokens(self.playbook),
+            "playbook_num_tokens": self._count_playbook_tokens(),
             "playbook_length": len(self.playbook)
         }
 
@@ -1420,7 +1464,11 @@ class ACE:
                     and global_step % self.prune_unused_interval == 0
                 ):
                     playbook_before_prune = self.playbook
-                    self.playbook, pruned_bullet_ids = prune_zero_evidence_bullets(self.playbook)
+                    prune_candidate, pruned_bullet_ids = prune_zero_evidence_bullets(self.playbook)
+                    if not self._accept_auxiliary_playbook(
+                        prune_candidate, f"train_e_{epoch}_s_{step}_prune", log_dir,
+                    ):
+                        pruned_bullet_ids = []
                     if pruned_bullet_ids:
                         print(
                             f"🧹 Pruned {len(pruned_bullet_ids)} unused bullets at "
@@ -1483,7 +1531,7 @@ class ACE:
                             "post_train_accuracy": post_train_accuracy
                         },
                         "val_result": val_results,
-                        "playbook_num_tokens": count_tokens(self.playbook),
+                        "playbook_num_tokens": self._count_playbook_tokens(),
                         "playbook_length": len(self.playbook),
                         "playbook_stats": get_playbook_stats(self.playbook)
                     }
@@ -1793,7 +1841,7 @@ class ACE:
                     "post_train_accuracy": post_train_accuracy
                 },
                 "cumulative_test_accuracy": cumulative_test_accuracy,
-                "playbook_num_tokens": count_tokens(self.playbook),
+                "playbook_num_tokens": self._count_playbook_tokens(),
                 "playbook_length": len(self.playbook),
                 "playbook_stats": get_playbook_stats(self.playbook)
             }

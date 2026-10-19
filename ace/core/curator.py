@@ -10,8 +10,10 @@ from typing import Dict, List, Tuple, Optional, Any
 from ..prompts.curator import (
     CURATOR_PROMPT,
     CURATOR_PROMPT_NO_GT,
+    BUDGET_MAINTENANCE_PROMPT,
     build_lifecycle_operation_instructions,
 )
+from .playbook_budget import PlaybookBudget, BudgetDecision, MaintenanceOperation
 from playbook_utils import extract_json_from_text, apply_curator_operations
 from logger import log_curator_operation_diff, log_curator_failure, log_playbook_hygiene
 from llm import timed_llm_call
@@ -36,6 +38,56 @@ class Curator:
         self.api_provider = api_provider
         self.model = model
         self.max_tokens = max_tokens
+        self.playbook_budget: Optional[PlaybookBudget] = None
+
+    def enforce_budget(
+        self,
+        previous: str,
+        candidate: str,
+        previous_next_id: int,
+        candidate_next_id: int,
+        call_id: str,
+        log_dir: Optional[str],
+        allowed_operations: List[str],
+        delete_harmful_margin: int,
+        delete_min_harmful: int,
+        recent_reflection: str = "",
+        use_json_mode: bool = False,
+    ) -> BudgetDecision:
+        """Run bounded local maintenance; leave legacy curation untouched when disabled."""
+        if self.playbook_budget is None:
+            return BudgetDecision(candidate, candidate_next_id, True, [])
+        budget = self.playbook_budget
+
+        def repair(playbook: str, tokens: int, attempt: int) -> list[MaintenanceOperation]:
+            maintenance_types = ["UPDATE", "MERGE"]
+            delete_candidates = []
+            if "DELETE" in allowed_operations:
+                maintenance_types.append("DELETE")
+                delete_candidates = self._find_delete_count_candidates(
+                    playbook, delete_harmful_margin, delete_min_harmful,
+                )
+            prompt = BUDGET_MAINTENANCE_PROMPT.format(
+                actual_tokens=tokens, token_budget=budget.limit,
+                excess_tokens=tokens - budget.limit,
+                operation_schema=build_lifecycle_operation_instructions(maintenance_types),
+                delete_candidates=json.dumps(delete_candidates, ensure_ascii=False),
+                recent_reflection=recent_reflection, candidate=playbook,
+            )
+            response, _ = timed_llm_call(
+                self.api_client, self.api_provider, self.model, prompt,
+                role="curator", call_id=f"{call_id}_budget_repair_{attempt}",
+                max_tokens=self.max_tokens, log_dir=log_dir, use_json_mode=use_json_mode,
+            )
+            parsed = self._extract_and_validate_operations(response, maintenance_types)
+            operations, _ = self._filter_evidence_backed_deletes(
+                parsed["operations"], delete_candidates,
+            )
+            return operations
+
+        return budget.enforce(
+            previous, candidate, previous_next_id, candidate_next_id, repair, call_id,
+        )
 
     @staticmethod
     def _find_delete_count_candidates(
@@ -265,9 +317,19 @@ near-duplicate rule. Retain a group only when its rules are materially distinct.
                     print(f"Warning: Failed to log curator operation diff: {e}")
             
             # Apply operations to playbook
+            previous_next_id = next_global_id
             updated_playbook, next_global_id = apply_curator_operations(
                 current_playbook, operations, next_global_id
             )
+            decision = self.enforce_budget(
+                current_playbook, updated_playbook, previous_next_id, next_global_id,
+                call_id, log_dir, allowed_operations, delete_harmful_margin,
+                delete_min_harmful, recent_reflection, use_json_mode,
+            )
+            updated_playbook, next_global_id = decision.playbook, decision.next_global_id
+            operations = operations + decision.maintenance if decision.accepted else []
+            if self.playbook_budget is not None:
+                call_info["budget_accepted"] = decision.accepted
             log_playbook_hygiene(Path(log_dir).parent if log_dir else None, {
                 "event": "curator_lifecycle_batch_applied",
                 "call_id": call_id,
@@ -312,6 +374,9 @@ near-duplicate rule. Retain a group only when its rules are materially distinct.
             return current_playbook, next_global_id, [], call_info
             
         except Exception as e:
+            if self.playbook_budget is not None:
+                # Do not hide budget journal/tokenizer failures behind legacy recovery.
+                raise
             print(f"❌ Curator operation failed: {e}")
             print(f"📄 Raw curator response preview: {response[:300]}...")
             
