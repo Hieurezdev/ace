@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Override this when vLLM runs on another host or port.
-export VLLM_BASE_URL="${VLLM_BASE_URL:-http://127.0.0.1:5000/v1}"
+export VLLM_BASE_URL="${VLLM_BASE_URL:-http://127.0.0.1:8000/v1}"
 
 MODEL="Qwen/Qwen3-4B-Instruct-2507"
 RESULTS_ROOT="${RESULTS_ROOT:-results/curator_operations_ablation}"

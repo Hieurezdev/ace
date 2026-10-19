@@ -221,8 +221,8 @@ class PlaybookBudgetTests(unittest.TestCase):
         ace.use_bulletpoint_analyzer, ace.use_rae, ace.use_adversarial = False, False, False
         processor = types.SimpleNamespace(answer_is_correct=lambda answer, target: answer == target)
         llm_stub.timed_llm_call.side_effect = [
-            ("answer", {}), response([ADD]), response([UPDATE]), ("answer", {}),
-            ("answer", {}), response([ADD]), ("answer", {}),
+            ("wrong", {}), ("answer", {}), response([ADD]), response([UPDATE]), ("answer", {}),
+            ("wrong", {}), ("answer", {}), response([ADD]), ("answer", {}),
         ]
         config = ace._extract_config_params({"playbook_token_budget": self.budget.limit})
         with patch.multiple(ORCHESTRATOR, create=True, count_tokens=len,
@@ -236,7 +236,7 @@ class PlaybookBudgetTests(unittest.TestCase):
                     usage_log_path=str(self.path / "usage.jsonl"), log_dir=str(self.path / "llm"),
                     config_params=config, total_samples=2,
                 )
-                self.assertEqual((pre, post), ("answer", "answer"))
+                self.assertEqual((pre, post), ("wrong", "answer"))
                 self.assertLessEqual(len(ace.playbook), self.budget.limit)
                 self.assertNotEqual(ace.playbook, before)
                 self.assertIn(ace.playbook, llm_stub.timed_llm_call.call_args.args[3])
