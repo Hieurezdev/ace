@@ -333,11 +333,53 @@ instead of overriding `--mode`, `--task_name`, `--save_path`, or
 A short training trial may never reach a large budget; inspect overflow and
 maintenance events before interpreting differences as a budget effect.
 
+To additionally evaluate **hard budget + full Curator operations**, use the
+separate wrapper below. It reuses the same budgets (4,000 / 8,000 / 10,000),
+datasets, model, seed, and training settings, enabling `ADD`, `UPDATE`, `MERGE`,
+`DELETE`, and `CREATE_META` for normal curation, plus `PRUNE` every 50 samples.
+DBSCAN proposes Curator
+MERGE candidates at similarity 0.9; it does not enable BulletpointAnalyzer
+post-Curator hygiene. RAE stays disabled because it is incompatible with this
+hard-budget experiment. FMB and adversarial generation remain off unless
+explicitly requested through extra arguments.
+
+```bash
+bash run_playbook_budget_sweep_full_operations.sh --dry-run
+bash run_playbook_budget_sweep_full_operations.sh --max_train_samples 50
+# Full training:
+bash run_playbook_budget_sweep_full_operations.sh
+```
+
+The additional arm writes to
+`results/playbook_budget_sweep_full_operations/<task>/budget_<tokens>/` by
+default, keeping the original budget-only results separate. `TOKEN_BUDGETS`,
+`TASKS`, `RESULTS_ROOT`, and other serving overrides work exactly as in the
+original sweep. The original script is unchanged. This comparison evaluates
+the full lifecycle bundle, including pruning and DBSCAN candidates, rather
+than isolating each operation's individual effect.
+
 Each run saves `playbook_budget_events.jsonl` (checks, repairs, commit/rollback)
 and, when overflow occurs, `playbook_budget_candidates.jsonl` (candidate and edit
 provenance). Every additional LLM call is logged separately under
 `detailed_llm_logs/*_budget_repair_*`. No repair calls are hidden in inference
 latency. Existing intermediate/final Playbook files contain committed versions.
+
+Budget-maintenance prompts include complete JSON examples with a mandatory
+`type` field in every operation. With `--api_provider vllm`, maintenance calls
+also use schema-constrained `response_format` automatically, even without
+`--json_mode`; ordinary Generator, Reflector, and Curator calls are unchanged.
+The maintenance schema permits only `UPDATE`/`MERGE`, plus `DELETE` when its
+flag is enabled and at least one counter-qualified deletion candidate exists.
+Other providers retain prompt guidance and local validation without receiving
+this vLLM-specific schema automatically.
+
+The vLLM server must support JSON-schema structured output. Unsupported-schema
+API errors are surfaced instead of silently reverting to unrestricted text.
+Schema-constrained output does not guarantee semantic correctness or prevent
+truncation by the output-token limit. Local validation and rollback remain in
+place; malformed operations are never assigned a guessed `type` or retried on
+unchanged input. Structured maintenance calls record `response_format` in their
+detailed logs. See [vLLM structured outputs](https://docs.vllm.ai/en/v0.19.0/features/structured_outputs/).
 
 Finance FMB ablation flags:
 

@@ -17,7 +17,7 @@ from logger import log_llm_call, log_problematic_request
 
 def timed_llm_call(client, api_provider, model, prompt, role, call_id, max_tokens=4096, log_dir=None,
                    sleep_seconds=None, retries_on_timeout=None, attempt=1, use_json_mode=False,
-                   measure_generation_latency=False):
+                   measure_generation_latency=False, response_schema: dict[str, object] | None = None):
     """
     Make a timed LLM call with error handling and retry logic.
     
@@ -43,6 +43,8 @@ def timed_llm_call(client, api_provider, model, prompt, role, call_id, max_token
         use_json_mode: Whether to use JSON mode for structured output
         measure_generation_latency: Stream the response and record TTFT and
             TPOT. Intended for controlled eval-only latency measurements.
+        response_schema: Optional JSON Schema for an OpenAI-compatible request.
+            Takes precedence over JSON-object mode. Native SGLang is unsupported.
     
     Returns:
         tuple: (response_text, call_info_dict)
@@ -52,6 +54,8 @@ def timed_llm_call(client, api_provider, model, prompt, role, call_id, max_token
         - Testing: ("INCORRECT_DUE_TO_EMPTY_RESPONSE, INCORRECT_DUE_TO_EMPTY_RESPONSE, ...", call_info)
     """
     start_time = time.time()
+    if response_schema is not None and api_provider == "sglang":
+        raise ValueError("JSON-schema response_format is unsupported by the native SGLang /generate path")
     prompt_time = time.time()
     if sleep_seconds is None:
         sleep_seconds = float(os.getenv("LLM_RETRY_SLEEP_SECONDS", "3"))
@@ -144,8 +148,13 @@ def timed_llm_call(client, api_provider, model, prompt, role, call_id, max_token
                 max_tokens_key: max_tokens
             }
             
-            # Add JSON mode if requested
-            if use_json_mode:
+            # Schema-constrained decoding takes precedence over syntax-only JSON mode.
+            if response_schema is not None:
+                api_params["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": {"name": "ace_response", "strict": True, "schema": response_schema},
+                }
+            elif use_json_mode:
                 api_params["response_format"] = {"type": "json_object"}
             call_start = time.time()
             if measure_generation_latency:
@@ -214,6 +223,8 @@ def timed_llm_call(client, api_provider, model, prompt, role, call_id, max_token
                 "tpot_seconds": tpot_seconds,
                 "latency_measurement": "streaming" if measure_generation_latency else None,
             }
+            if response_schema is not None:
+                call_info["response_format"] = "json_schema"
             
             print(f"[{role.upper()}] Call {call_id} completed in {total_time:.2f}s")
             

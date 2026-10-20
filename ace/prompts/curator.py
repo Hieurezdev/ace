@@ -2,6 +2,70 @@
 Curator prompts for ACE system.
 """
 
+import json
+
+
+BUDGET_OPERATION_EXAMPLES: dict[str, dict[str, str | list[str]]] = {
+    "UPDATE": {
+        "type": "UPDATE", "target_id": "<existing_bullet_id>",
+        "content": "<complete concise rule preserving its conditions>",
+        "reason": "<why this removes redundant wording without changing scope>",
+    },
+    "MERGE": {
+        "type": "MERGE", "source_ids": ["<existing_id_1>", "<existing_id_2>"],
+        "section": "<existing_section>", "content": "<complete consolidated rule>",
+        "reason": "<why the useful conditions of both sources are preserved>",
+    },
+    "DELETE": {
+        "type": "DELETE", "target_id": "<eligible_delete_candidate_id>",
+        "reason": "<evidence that this counter-qualified rule is harmful or superseded>",
+    },
+}
+
+
+def build_budget_response_schema(allowed_operations: list[str]) -> dict[str, object]:
+    """Use one operation contract for prompt examples and constrained decoding."""
+    variants: list[dict[str, object]] = []
+    for kind in allowed_operations:
+        if kind not in BUDGET_OPERATION_EXAMPLES:
+            raise ValueError(f"Unsupported budget maintenance operation: {kind}")
+        properties: dict[str, object] = {}
+        for field in BUDGET_OPERATION_EXAMPLES[kind]:
+            if field == "type":
+                properties[field] = {"type": "string", "enum": [kind]}
+            elif field == "source_ids":
+                properties[field] = {"type": "array", "items": {"type": "string"}, "minItems": 2}
+            else:
+                properties[field] = {"type": "string"}
+        variants.append({
+            "type": "object", "properties": properties,
+            "required": list(properties), "additionalProperties": False,
+        })
+    if not variants:
+        raise ValueError("Budget maintenance requires at least one enabled operation")
+    return {
+        "type": "object", "additionalProperties": False,
+        "required": ["reasoning", "operations"],
+        "properties": {
+            "reasoning": {"type": "string"},
+            "operations": {"type": "array", "items": {"anyOf": variants}},
+        },
+    }
+
+
+def build_budget_response_examples(allowed_operations: list[str]) -> str:
+    """Show each permitted operation in a complete, unambiguous JSON envelope."""
+    examples = [
+        f"{kind} example:\n" + json.dumps({
+            "reasoning": "Short evidence-based justification.",
+            "operations": [BUDGET_OPERATION_EXAMPLES[kind]],
+        }, indent=2)
+        for kind in allowed_operations
+    ]
+    examples.append('No safe edit:\n{"reasoning":"No safe local reduction.","operations":[]}')
+    return "\n\n".join(examples)
+
+
 # Curator prompt for intelligent playbook management
 BUDGET_MAINTENANCE_PROMPT = """Maintain ONE canonical Playbook, not a query-specific subset.
 The proposed update is {actual_tokens} tokens; its hard limit is {token_budget}.
@@ -30,6 +94,15 @@ Candidate Playbook (including the newly proposed insights):
 
 Return only JSON with "reasoning" (a SHORT evidence-based rationale) and
 "operations". Never output a full Playbook or a detailed reasoning trace.
+Every item in "operations" MUST contain the literal key "type" with an enabled
+uppercase operation name. Do not substitute "action", "operation", or an object
+key such as "UPDATE" for "type". Use the exact field names in the examples.
+Return an array of operation objects, not an array of strings or a keyed map.
+The examples show alternative responses, not one combined batch. Replace all
+placeholder IDs, sections, and content with values from the candidate; never
+copy placeholder IDs or add fields such as "helpful" or "harmful".
+
+{response_examples}
 """
 
 CURATOR_PROMPT = """You are a master curator of knowledge. Your job is to identify what new insights should be added to an existing playbook based on a reflection from a previous attempt.

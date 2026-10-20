@@ -208,6 +208,60 @@ class PlaybookBudgetTests(unittest.TestCase):
         self.assertEqual(llm_stub.timed_llm_call.call_count, 2)
         self.assertEqual(self.events()[-2]["event"], "repair_invalid")
 
+    def test_missing_type_is_rejected_without_guessing_the_operation(self):
+        malformed = {key: value for key, value in UPDATE.items() if key != "type"}
+        llm_stub.timed_llm_call.side_effect = [response([ADD]), response([malformed])]
+        book, next_id, operations, _ = self.curate(self.curator(True))
+        self.assertEqual((book, next_id, operations), (OLD, 2, []))
+        self.assertEqual(llm_stub.timed_llm_call.call_count, 2)
+        self.assertIn("missing required 'type'", self.events()[-2]["error"])
+
+    def test_vllm_maintenance_requests_required_types_even_without_json_mode(self):
+        curator = self.curator(True)
+        curator.api_provider = "vllm"
+        llm_stub.timed_llm_call.side_effect = [response([ADD]), response([UPDATE])]
+        book, _, _, _ = self.curate(curator)
+        self.assertLessEqual(len(book), self.budget.limit)
+        call = llm_stub.timed_llm_call.call_args
+        self.assertFalse(call.kwargs["use_json_mode"])
+        schema = call.kwargs["response_schema"]
+        self.assertEqual(schema["required"], ["reasoning", "operations"])
+        variants = schema["properties"]["operations"]["items"]["anyOf"]
+        self.assertEqual({item["properties"]["type"]["enum"][0] for item in variants}, {"UPDATE", "MERGE"})
+        for operation in variants:
+            self.assertIn("type", operation["required"])
+            self.assertFalse(operation["additionalProperties"])
+
+    def test_vllm_schema_excludes_delete_when_no_counter_candidate_qualifies(self):
+        curator = self.curator(True)
+        curator.api_provider = "vllm"
+        llm_stub.timed_llm_call.side_effect = [response([ADD]), response([UPDATE])]
+        self.curate(curator, ["ADD", "DELETE"])
+        schema = llm_stub.timed_llm_call.call_args.kwargs["response_schema"]
+        variants = schema["properties"]["operations"]["items"]["anyOf"]
+        self.assertNotIn("DELETE", {item["properties"]["type"]["enum"][0] for item in variants})
+
+    def test_vllm_schema_includes_delete_only_for_counter_qualified_candidates(self):
+        curator = self.curator(True)
+        curator.api_provider = "vllm"
+        previous = OLD.replace("helpful=5 harmful=1", "helpful=0 harmful=6")
+        candidate, next_id = PLAYBOOK.apply_curator_operations(previous, [deepcopy(ADD)], 2)
+        deletion = {"type": "DELETE", "target_id": "calc-00001", "reason": "Repeated failures confirm harm."}
+        llm_stub.timed_llm_call.return_value = response([deletion])
+        decision = curator.enforce_budget(
+            previous, candidate, 2, next_id, "eligible_delete", str(self.path), ["ADD", "DELETE"], 4, 3,
+        )
+        self.assertTrue(decision.accepted)
+        self.assertNotIn("[calc-00001]", decision.playbook)
+        schema = llm_stub.timed_llm_call.call_args.kwargs["response_schema"]
+        variants = schema["properties"]["operations"]["items"]["anyOf"]
+        self.assertIn("DELETE", {item["properties"]["type"]["enum"][0] for item in variants})
+
+    def test_other_providers_do_not_receive_an_unsupported_schema_automatically(self):
+        llm_stub.timed_llm_call.side_effect = [response([ADD]), response([UPDATE])]
+        self.curate(self.curator(True))
+        self.assertIsNone(llm_stub.timed_llm_call.call_args.kwargs["response_schema"])
+
     def test_two_training_samples_keep_one_evolving_bounded_playbook(self):
         ace = ORCHESTRATOR.ACE.__new__(ORCHESTRATOR.ACE)
         ace.playbook, ace.next_global_id = OLD, 2

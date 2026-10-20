@@ -11,6 +11,8 @@ from ..prompts.curator import (
     CURATOR_PROMPT,
     CURATOR_PROMPT_NO_GT,
     BUDGET_MAINTENANCE_PROMPT,
+    build_budget_response_examples,
+    build_budget_response_schema,
     build_lifecycle_operation_instructions,
 )
 from .playbook_budget import PlaybookBudget, BudgetDecision, MaintenanceOperation
@@ -63,21 +65,30 @@ class Curator:
             maintenance_types = ["UPDATE", "MERGE"]
             delete_candidates = []
             if "DELETE" in allowed_operations:
-                maintenance_types.append("DELETE")
                 delete_candidates = self._find_delete_count_candidates(
                     playbook, delete_harmful_margin, delete_min_harmful,
                 )
+                if delete_candidates:
+                    maintenance_types.append("DELETE")
             prompt = BUDGET_MAINTENANCE_PROMPT.format(
                 actual_tokens=tokens, token_budget=budget.limit,
                 excess_tokens=tokens - budget.limit,
                 operation_schema=build_lifecycle_operation_instructions(maintenance_types),
                 delete_candidates=json.dumps(delete_candidates, ensure_ascii=False),
                 recent_reflection=recent_reflection, candidate=playbook,
+                response_examples=build_budget_response_examples(maintenance_types),
             )
+            response_schema = (
+                build_budget_response_schema(maintenance_types)
+                if self.api_provider == "vllm" else None
+            )
+            if response_schema is not None:
+                print(f"[CURATOR BUDGET] {call_id}: JSON Schema enabled ({', '.join(maintenance_types)})")
             response, _ = timed_llm_call(
                 self.api_client, self.api_provider, self.model, prompt,
                 role="curator", call_id=f"{call_id}_budget_repair_{attempt}",
                 max_tokens=self.max_tokens, log_dir=log_dir, use_json_mode=use_json_mode,
+                response_schema=response_schema,
             )
             parsed = self._extract_and_validate_operations(response, maintenance_types)
             operations, _ = self._filter_evidence_backed_deletes(

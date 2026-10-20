@@ -9,10 +9,11 @@ from pathlib import Path
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "run_playbook_budget_sweep.sh"
+FULL_OPERATIONS_SCRIPT = SCRIPT.with_name("run_playbook_budget_sweep_full_operations.sh")
 
 
 class PlaybookBudgetSweepTests(unittest.TestCase):
-    def run_sweep(self, budgets: str, *arguments: str) -> subprocess.CompletedProcess[str]:
+    def run_sweep(self, budgets: str, *arguments: str, script: Path = SCRIPT) -> subprocess.CompletedProcess[str]:
         with tempfile.TemporaryDirectory() as directory:
             results = Path(directory) / "unused_results"
             environment = {
@@ -22,7 +23,7 @@ class PlaybookBudgetSweepTests(unittest.TestCase):
                 "RESULTS_ROOT": str(results),
             }
             result = subprocess.run(
-                ["bash", str(SCRIPT), "--dry-run", *arguments],
+                ["bash", str(script), "--dry-run", *arguments],
                 cwd=directory, env=environment, capture_output=True, text=True,
                 check=False, timeout=10,
             )
@@ -68,6 +69,41 @@ class PlaybookBudgetSweepTests(unittest.TestCase):
         result = self.run_sweep("2000", "--playbook_token_budget=9999")
         self.assertEqual(result.returncode, 2)
         self.assertIn("TOKEN_BUDGETS", result.stderr)
+
+    def test_full_operations_sweep_preserves_budgets_and_enables_only_requested_components(self):
+        result = self.run_sweep("4000 8000 10000", "--max_train_samples", "50", script=FULL_OPERATIONS_SCRIPT)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        commands = [shlex.split(line) for line in result.stdout.splitlines() if line.startswith("uv ")]
+        self.assertEqual(len(commands), 6)
+        for command in commands:
+            self.assertIn("--use_budgeted_curator", command)
+            self.assertIn("--use_lifecycle_curator", command)
+            self.assertIn("--use_dbscan_merge_candidates", command)
+            self.assertEqual(command[command.index("--curator_dbscan_similarity_threshold") + 1], "0.9")
+            self.assertEqual(command[command.index("--prune_unused_interval") + 1], "50")
+            self.assertEqual(command[command.index("--max_train_samples") + 1], "50")
+            self.assertEqual(command[command.index("--seed") + 1], "42")
+            for disabled in ("--use_rae", "--use_verified_failure_memory", "--use_failure_memory",
+                             "--use_adversarial", "--use_bulletpoint_analyzer", "--use_dbscan_merge"):
+                self.assertNotIn(disabled, command)
+        self.assertEqual(
+            {command[command.index("--playbook_token_budget") + 1] for command in commands},
+            {"4000", "8000", "10000"},
+        )
+
+    def test_full_operations_default_output_does_not_mix_with_budget_only_results(self):
+        environment = {**os.environ, "TASKS": "formula", "TOKEN_BUDGETS": "4000"}
+        environment.pop("RESULTS_ROOT", None)
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run(
+                ["bash", str(FULL_OPERATIONS_SCRIPT), "--dry-run"],
+                cwd=directory, env=environment, capture_output=True, text=True,
+                check=False, timeout=10,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        command = next(shlex.split(line) for line in result.stdout.splitlines() if line.startswith("uv "))
+        self.assertEqual(command[command.index("--save_path") + 1],
+                         "results/playbook_budget_sweep_full_operations/formula/budget_4000")
 
 
 if __name__ == "__main__":
