@@ -528,6 +528,48 @@ class ACE:
         if real_failure_memory is not None:
             real_failure_memory.set_log_dir(log_dir, task_name=task_name)
 
+        self.generator.amore_memory = None
+        if config.get("use_amore", False):
+            if mode == "online":
+                raise ValueError("AMORE currently supports offline training and read-only eval_only")
+            from .core.amore_memory import AmoreMemory
+            from llm import timed_llm_call
+            memory_path = config.get("amore_memory_path")
+            if mode == "eval_only" and not memory_path:
+                raise ValueError("AMORE eval_only requires --amore_memory_path from training")
+            model_holder = []
+
+            def encode_amore(texts):
+                if self.playbook_retriever is not None:
+                    return self.playbook_retriever.encode(texts)
+                if real_failure_memory is not None:
+                    vectors = real_failure_memory._encode(texts)
+                    if vectors is None:
+                        raise ValueError("FMB encoder unavailable for AMORE")
+                    return vectors
+                if not model_holder:
+                    from sentence_transformers import SentenceTransformer
+                    model_holder.append(SentenceTransformer("BAAI/bge-m3"))
+                return model_holder[0].encode(texts, normalize_embeddings=True)
+
+            def call_amore(stage, prompt):
+                limits = {"splitter": 256, "compressor": 1024, "hypothesizer": 512}
+                response, _ = timed_llm_call(
+                    self.reflector_client, self.reflector.api_provider, self.reflector.model,
+                    prompt, role="amore", call_id=stage,
+                    max_tokens=min(self.max_tokens, limits.get(stage, self.max_tokens)),
+                )
+                return response
+
+            self.generator.amore_memory = AmoreMemory(
+                Path(memory_path) if memory_path else Path(save_path) / "amore_memory.json",
+                call_amore, encode_amore,
+                top_k=config.get("amore_top_k", 4),
+                consolidation_frequency=config.get("amore_consolidation_frequency", 50),
+                max_buffer_tasks=config.get("amore_max_buffer_tasks", 10),
+                read_only=mode == "eval_only",
+            )
+
         adversarial_failure_memory = self._get_adversarial_failure_memory()
         if adversarial_failure_memory is not None:
             adversarial_failure_memory.set_log_dir(
@@ -1388,6 +1430,17 @@ class ACE:
         if adversarial_result is not None:
             tracking_dict["adversarial_result"] = adversarial_result
         
+        if self.generator.amore_memory is not None:
+            self.generator.amore_memory.observe({
+                "task_id": step_id, "question": question + "\n" + context,
+                "trajectory": gen_response,
+                "feedback": json.dumps({"expected_answer": target if not no_ground_truth else None,
+                                        "observed_answer": final_answer,
+                                        "correct": post_train_is_correct if not no_ground_truth else None,
+                                        "reflection": reflection_content}),
+            }, self.playbook)
+            if step == total_samples:
+                self.generator.amore_memory.flush(self.playbook)
         return pre_train_answer, post_train_answer, tracking_dict
     
     def _offline_train(
@@ -1648,6 +1701,8 @@ class ACE:
         print(f"Best Validation Accuracy: {best_accuracy:.3f}")
         print(f"{'='*60}\n")
 
+        if self.generator.amore_memory is not None:
+            self.generator.amore_memory.flush(self.playbook)
         return {"best_validation_accuracy": best_accuracy}
 
     

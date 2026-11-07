@@ -165,6 +165,14 @@ def parse_args():
     parser.add_argument("--adversarial_verifier_max_ambiguity", type=float, default=0.20,
                         help="Maximum ambiguity allowed for an attack (default: 0.20)")
     
+    parser.add_argument("--use_amore", action="store_true",
+                        help="Enable idea4 episodic memory alongside native ACE")
+    parser.add_argument("--amore_memory_path", type=str, default=None,
+                        help="Memory checkpoint; required for AMORE eval_only")
+    parser.add_argument("--amore_top_k", type=int, default=4)
+    parser.add_argument("--amore_consolidation_frequency", type=int, default=50)
+    parser.add_argument("--amore_max_buffer_tasks", type=int, default=10)
+
     # Output configuration
     parser.add_argument("--save_path", type=str, required=True,
                         help="Directory to save results")
@@ -406,6 +414,11 @@ def main():
     
     # Prepare configuration
     config = {
+        'use_amore': args.use_amore,
+        'amore_memory_path': args.amore_memory_path,
+        'amore_top_k': args.amore_top_k,
+        'amore_consolidation_frequency': args.amore_consolidation_frequency,
+        'amore_max_buffer_tasks': args.amore_max_buffer_tasks,
         'num_epochs': args.num_epochs,
         'max_num_rounds': args.max_num_rounds,
         'curator_frequency': args.curator_frequency,

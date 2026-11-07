@@ -32,6 +32,7 @@ class Generator:
         self.model = model
         self.max_tokens = max_tokens
         self.playbook_budget: Optional[PlaybookBudget] = None
+        self.amore_memory = None
 
     def generate(
         self,
@@ -75,6 +76,9 @@ class Generator:
         if self.playbook_budget is not None:
             # Fail before an LLM call if an unsupported mutation bypassed write-time checks.
             self.playbook_budget.require_within_budget(effective_playbook)
+
+        if self.amore_memory is not None:
+            context += self.amore_memory.context(question)
 
         # Format the prompt
         prompt = GENERATOR_PROMPT.format(effective_playbook, reflection, question, context)
