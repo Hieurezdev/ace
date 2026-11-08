@@ -32,6 +32,39 @@ runner or its unrelated benchmark datasets. Native ACE remains the executor.
   training run with an existing path resumes it; use a fresh output directory for
   a fresh experiment.
 
+## Pair/full operations + verified FMB + AMORE ablation
+
+`run_ops_fmb_amore_ablation.sh` runs these four conditions:
+`ops_fmb`, `ops_amore`, `fmb_amore`, `all`.
+
+```bash
+DRY_RUN=1 bash run_ops_fmb_amore_ablation.sh
+MAX_TRAIN_SAMPLES=5 bash run_ops_fmb_amore_ablation.sh
+VARIANTS="all" bash run_ops_fmb_amore_ablation.sh
+VARIANTS="ops_fmb fmb_amore" bash run_ops_fmb_amore_ablation.sh
+```
+
+All conditions use the same backbone/seed/training settings within each repo.
+Full operations means ADD/UPDATE/DELETE/MERGE/CREATE_META, DBSCAN candidate
+proposals and periodic native pruning, not automatic BulletpointAnalyzer hygiene.
+Verified FMB uses top-k 10; AMORE uses top-k 4, frequency 50 and a 10-task buffer.
+RAE and adversarial agents remain off. Hard-budget enforcement is OFF in all
+four conditions: repair can itself invoke UPDATE/MERGE and would confound the
+operation-off comparison. The common 8000 setting is not a hard token cap here.
+This suite is distinct from the older `run_amore_idea4.sh` full-operations profile,
+which enables hard budget. Compare results only under matching controls.
+
+Finance runs both Formula and FiNER. Each dataset/condition has a separate
+output directory. Set `OUTPUT_ROOT` to a fresh path for repeated experiments.
+AppWorld runs train, normal rollout/evaluation (40 steps), then challenge
+rollout/evaluation (20 steps), using 12 paired configuration files. The four
+conditions have separate Playbook, FMB and AMORE paths under
+`experiments/playbooks/ops_fmb_amore_ablation/<condition>/`.
+Both scripts refuse existing checkpoints/outputs rather than erase or silently
+resume them. For AppWorld repeats, use configurations with fresh checkpoint
+paths. Evaluation never updates FMB or AMORE; a full benchmark still runs when
+`MAX_TRAIN_SAMPLES` is set, because it limits training only.
+
 ## Runs
 
 From this repository root, with the existing vLLM/environment servers running:
