@@ -1,5 +1,6 @@
 import os
 import json
+from ast import literal_eval
 from utils import extract_answer
 from typing import List, Dict, Any, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -140,9 +141,9 @@ class DataProcessor:
 
         for prediction, ground_truth in zip(pred, label):
             try:
-                ground_truth = eval(ground_truth)
-                prediction = eval(prediction.replace(",", "").replace("$", ""))
-            except:
+                ground_truth = literal_eval(ground_truth)
+                prediction = literal_eval(prediction.replace(",", "").replace("$", ""))
+            except (ValueError, SyntaxError):
                 pass
             if prediction == ground_truth:
                 count += 1
@@ -179,7 +180,6 @@ class DataProcessor:
             return self._formula_answer_is_correct(predicted, ground_truth)
         else:
             raise ValueError(f"Unknown task: {self.task_name}")
-    
     def _evaluate_finer_accuracy(self, out: List[str], target: List[str]) -> tuple:
         """FINER dataset specific accuracy evaluation"""
         if len(out) != len(target):
@@ -237,4 +237,3 @@ class DataProcessor:
             return self._evaluate_formula_accuracy(out, target)
         else:
             raise ValueError(f"Unknown task: {self.task_name}")
-    

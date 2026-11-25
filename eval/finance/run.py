@@ -50,6 +50,10 @@ def parse_args():
                         help="Max reflection rounds for incorrect answers")
     parser.add_argument("--curator_frequency", type=int, default=1,
                         help="Run curator every N steps")
+    parser.add_argument("--order_curation", choices=("off", "naive_batch", "reconcile"), default="off",
+                        help="Buffer offline Curator edits; reconcile overlapping bullet operations")
+    parser.add_argument("--order_curation_batch_size", type=int, default=4,
+                        help="Maximum number of tasks sharing a frozen Playbook")
     parser.add_argument("--eval_steps", type=int, default=100,
                         help="Evaluate every N steps")
     parser.add_argument("--online_eval_frequency", type=int, default=15,
@@ -409,6 +413,8 @@ def main():
         'num_epochs': args.num_epochs,
         'max_num_rounds': args.max_num_rounds,
         'curator_frequency': args.curator_frequency,
+        'order_curation': args.order_curation,
+        'order_curation_batch_size': args.order_curation_batch_size,
         'eval_steps': args.eval_steps,
         'online_eval_frequency': args.online_eval_frequency,
         'save_steps': args.save_steps,

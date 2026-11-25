@@ -171,6 +171,7 @@ class Curator:
         delete_harmful_margin: int = 4,
         delete_min_harmful: int = 3,
         merge_candidates: Optional[List[Dict[str, Any]]] = None,
+        propose_only: bool = False,
     ) -> Tuple[str, int, List[Dict[str, Any]], Dict[str, Any]]:
         """
         Curate the playbook based on reflection feedback.
@@ -319,6 +320,8 @@ near-duplicate rule. Retain a group only when its rules are materially distinct.
                         "without sufficient counter evidence"
                     )
             print(f"✅ Curator JSON schema validated successfully: {len(operations)} operations")
+            if propose_only:
+                return current_playbook, next_global_id, operations, call_info
             
             # Log detailed diff for each operation before applying
             for op in operations:

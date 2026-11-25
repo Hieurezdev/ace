@@ -43,6 +43,7 @@ with patch.dict(sys.modules):
     CURATOR = load_module("budget_test_ace.core.curator", ROOT / "ace/core/curator.py")
     GENERATOR = load_module("budget_test_ace.core.generator", ROOT / "ace/core/generator.py")
     core = sys.modules["budget_test_ace.core"]
+    core.__path__ = [str(ROOT / "ace/core")]
     for name in ("Generator", "Reflector", "Curator", "BulletpointAnalyzer", "PlaybookRetriever",
                  "FailureMemoryBank", "AdversarialAgent"):
         setattr(core, name, object)
@@ -54,6 +55,31 @@ OLD = "## RULES\n[calc-00001] helpful=5 harmful=1 :: " + "long explanation " * 1
 ADD = {"type": "ADD", "section": "rules", "content": "New reusable insight."}
 UPDATE = {"type": "UPDATE", "target_id": "calc-00001", "content": "Concise valid rule.",
           "reason": "Remove redundant prose, retain the same conditions."}
+
+
+class OrderBatchIntegrationTests(unittest.TestCase):
+    def test_replay_regression_keeps_the_original_playbook_and_id(self):
+        ace = ORCHESTRATOR.ACE.__new__(ORCHESTRATOR.ACE)
+        ace.playbook, ace.next_global_id = OLD, 2
+        ace._order_edits, ace._order_tags = [ADD], []
+        ace.curator = CURATOR.Curator(None, "fake", "fake")
+        ace.curator_allowed_operations = ["ADD"]
+        ace.delete_harmful_margin = 4
+        ace.delete_min_harmful = 3
+        ace.generator = Mock()
+        ace.generator.generate.side_effect = [("wrong", [], {}), ("ok", [], {}),
+                                              ("ok", [], {}), ("wrong", [], {})]
+        processor = Mock()
+        processor.answer_is_correct.side_effect = lambda prediction, target: prediction == target
+        cases = [{"question": label, "context": "", "target": "ok"} for label in ("target", "guard")]
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            ORCHESTRATOR, "extract_answer", side_effect=lambda response: response, create=True,
+        ):
+            log_dir = Path(directory) / "llm"
+            ace._flush_order_batch(cases, processor, {"order_curation": "reconcile"},
+                                   "test", str(log_dir), False)
+        self.assertEqual((ace.playbook, ace.next_global_id, ace._order_edits), (OLD, 2, []))
+        self.assertEqual(ace.generator.generate.call_count, 4)
 
 
 def response(operations):

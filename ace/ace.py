@@ -18,6 +18,7 @@ from .core import Generator, Reflector, Curator, BulletpointAnalyzer, PlaybookRe
 from .core import AdversarialAgent
 from .core.stress_test import corrupt_playbook
 from .core.playbook_budget import PlaybookBudget, load_token_counter
+from .core.order_curation import Operation, plan_batch, replay_counts
 from playbook_utils import *
 from logger import *
 from utils import *
@@ -485,6 +486,17 @@ class ACE:
         
         # Extract configuration
         config_params = self._extract_config_params(config)
+        self._order_edits: list[Operation] | None = None
+        self._order_tags: list[list[dict[str, str]]] = []
+        order_mode = config.get("order_curation", "off")
+        if order_mode != "off":
+            if order_mode not in {"naive_batch", "reconcile"} or config.get("order_curation_batch_size", 4) < 2:
+                raise ValueError("Order curation requires a valid mode and a batch size >= 2")
+            if mode != "offline" or config_params["no_ground_truth"]:
+                raise ValueError("Order curation requires offline Finance adaptation with ground truth")
+            if self.use_rae or self.use_adversarial or self.use_bulletpoint_analyzer or config_params["stress_noise_rate"]:
+                raise ValueError("Disable RAE, adversarial episodes, BulletpointAnalyzer and stress noise for order curation")
+            self._order_edits = []
         self.curator.playbook_budget = None
         self.generator.playbook_budget = None
         if config.get('use_budgeted_curator', False):
@@ -1204,9 +1216,8 @@ class ACE:
                 
                 # Update bullet counts
                 if bullet_tags:
-                    self._accept_auxiliary_playbook(
-                        update_bullet_counts(self.playbook, bullet_tags),
-                        f"{step_id}_round_{round_num}_counters", log_dir,
+                    self._record_training_counters(
+                        bullet_tags, f"{step_id}_round_{round_num}_counters", log_dir,
                     )
                 
                 # Regenerate with reflection
@@ -1287,10 +1298,7 @@ class ACE:
             
             # Update bullet counts
             if bullet_tags:
-                self._accept_auxiliary_playbook(
-                    update_bullet_counts(self.playbook, bullet_tags),
-                    f"{step_id}_correct_counters", log_dir,
-                )
+                self._record_training_counters(bullet_tags, f"{step_id}_correct_counters", log_dir)
             
             # Log with reflection
             log_bullet_usage(usage_log_path, epoch, step, task_dict, bullet_ids,
@@ -1322,12 +1330,16 @@ class ACE:
                 delete_harmful_margin=self.delete_harmful_margin,
                 delete_min_harmful=self.delete_min_harmful,
                 merge_candidates=self._get_curator_merge_candidates(log_dir, step_id),
+                propose_only=getattr(self, "_order_edits", None) is not None,
             )
+            if getattr(self, "_order_edits", None) is not None:
+                self._order_edits.extend(operations)
+                tracking_dict["curator_deferred"] = True
             if real_failure_memory is not None and real_failure_memory.mode == "verified":
                 real_failure_memory.record_curator_result(
                     failure_memory_id,
                     operations,
-                    applied=bool(operations),
+                    applied=bool(operations) and getattr(self, "_order_edits", None) is None,
                 )
             
             # Run bulletpoint analyzer if enabled
@@ -1389,6 +1401,74 @@ class ACE:
             tracking_dict["adversarial_result"] = adversarial_result
         
         return pre_train_answer, post_train_answer, tracking_dict
+
+    def _record_training_counters(self, tags: list[dict[str, str]], call_id: str, log_dir: str) -> None:
+        if getattr(self, "_order_edits", None) is not None:
+            self._order_tags.append(tags)
+        else:
+            self._accept_auxiliary_playbook(update_bullet_counts(self.playbook, tags), call_id, log_dir)
+
+    def _flush_order_batch(
+        self, cases: list[dict[str, Any]], data_processor, config: dict[str, Any],
+        call_id: str, log_dir: str, prune: bool,
+    ) -> None:
+        assert self._order_edits is not None
+        plan = plan_batch(self._order_edits, resolve_overlaps=config["order_curation"] == "reconcile")
+        counted = self.playbook
+        for tags in self._order_tags:
+            counted = update_bullet_counts(counted, tags)
+        budget = self.curator.playbook_budget
+        if budget is not None and budget.count_tokens(counted) > budget.limit:
+            counted = self.playbook
+        candidate, next_id = apply_curator_operations(
+            counted, [dict(op) for op in plan.operations], self.next_global_id,
+        ) if plan.operations else (counted, self.next_global_id)
+        if prune:
+            candidate, _ = prune_zero_evidence_bullets(candidate)
+        accepted = candidate == counted
+        repaired, regressed, probe_rollouts = 0, 0, 0
+        reason = "no_content_changes"
+        if candidate != counted:
+            decision = self.curator.enforce_budget(
+                counted, candidate, self.next_global_id, next_id, call_id, log_dir,
+                self.curator_allowed_operations, self.delete_harmful_margin,
+                self.delete_min_harmful, "Retain the conditions of reconciled Curator edits.",
+                config.get("use_json_mode", False),
+            )
+            if decision.accepted and decision.playbook != counted:
+                def evaluate(playbook: str, phase: str) -> list[bool]:
+                    outcomes = []
+                    for index, case in enumerate(cases):
+                        response, _, _ = self.generator.generate(
+                            question=case["question"], context=case["context"], playbook=playbook,
+                            reflection="(empty)", use_json_mode=config.get("use_json_mode", False),
+                            call_id=f"{call_id}_{phase}_{index}", log_dir=log_dir,
+                        )
+                        outcomes.append(data_processor.answer_is_correct(extract_answer(response), case["target"]))
+                    return outcomes
+
+                # Both versions start with the same buffered counter evidence.
+                repaired, regressed = replay_counts(
+                    evaluate(counted, "base"), evaluate(decision.playbook, "candidate"),
+                )
+                probe_rollouts = 2 * len(cases)
+                accepted = repaired > 0 and regressed == 0
+                reason = "replay_passed" if accepted else "insufficient_gain_or_regression"
+                if accepted:
+                    self.playbook, self.next_global_id = decision.playbook, decision.next_global_id
+            else:
+                reason = "budget_rejected_or_no_content_changes"
+        if reason != "replay_passed":
+            self.playbook = counted
+        log_playbook_hygiene(Path(log_dir).parent, {
+            "event": "order_batch_decision", "mode": config["order_curation"], "call_id": call_id,
+            "proposals": len(self._order_edits), "overlap_groups": plan.overlapping_groups,
+            "reconciled_groups": plan.reconciled_groups, "held_groups": plan.held_groups,
+            "cases": len(cases), "probe_rollouts": probe_rollouts, "repaired": repaired,
+            "regressed": regressed, "accepted": accepted, "reason": reason,
+        })
+        self._order_edits.clear()
+        self._order_tags.clear()
     
     def _offline_train(
         self,
@@ -1463,6 +1543,9 @@ class ACE:
             epoch_targets_pre_train = []
             epoch_answers_post_train = []
             epoch_targets_post_train = []
+            order_cases = []
+            order_anchor = None
+            next_order_anchor = None
             
             for step, task_dict in enumerate(train_samples_to_run, start=resume_from_step):
                 print(f"\n--- Step {step}/{len(train_samples)} ---")
@@ -1504,10 +1587,22 @@ class ACE:
                 pre_train_post_train_results.append(pre_train_post_train_result)
 
                 global_step = (epoch - 1) * len(train_samples) + step
-                if (
-                    self.prune_unused_bullets
-                    and global_step % self.prune_unused_interval == 0
-                ):
+                prune_due = self.prune_unused_bullets and global_step % self.prune_unused_interval == 0
+                if getattr(self, "_order_edits", None) is not None:
+                    order_cases.append(task_dict)
+                    if tracking_dict["pre_train_result"]["is_correct"]:
+                        next_order_anchor = task_dict
+                    if (len(order_cases) >= config.get("order_curation_batch_size", 4)
+                            or step == len(train_samples) or step % eval_steps == 0
+                            or step % save_steps == 0 or prune_due):
+                        replay_cases = order_cases if order_anchor is None else [*order_cases, order_anchor]
+                        self._flush_order_batch(
+                            replay_cases, data_processor, config, f"train_e_{epoch}_s_{step}_order", log_dir, prune_due,
+                        )
+                        order_cases.clear()
+                        order_anchor = next_order_anchor or order_anchor
+                        next_order_anchor = None
+                elif prune_due:
                     playbook_before_prune = self.playbook
                     prune_candidate, pruned_bullet_ids = prune_zero_evidence_bullets(self.playbook)
                     if not self._accept_auxiliary_playbook(
