@@ -50,6 +50,12 @@ def parse_args():
                         help="Max reflection rounds for incorrect answers")
     parser.add_argument("--curator_frequency", type=int, default=1,
                         help="Run curator every N steps")
+    parser.add_argument("--active_playbook", choices=("off", "disagreement", "random"), default="off",
+                        help="Choose cases for offline comparison of Curator edit alternatives")
+    parser.add_argument("--active_playbook_pool_size", type=int, default=6)
+    parser.add_argument("--active_playbook_checker_cases", type=int, default=3)
+    parser.add_argument("--active_playbook_max_candidates", type=int, default=3,
+                        help="Maximum candidate Playbooks, including HOLD")
     parser.add_argument("--eval_steps", type=int, default=100,
                         help="Evaluate every N steps")
     parser.add_argument("--online_eval_frequency", type=int, default=15,
@@ -409,6 +415,10 @@ def main():
         'num_epochs': args.num_epochs,
         'max_num_rounds': args.max_num_rounds,
         'curator_frequency': args.curator_frequency,
+        'active_playbook': args.active_playbook,
+        'active_playbook_pool_size': args.active_playbook_pool_size,
+        'active_playbook_checker_cases': args.active_playbook_checker_cases,
+        'active_playbook_max_candidates': args.active_playbook_max_candidates,
         'eval_steps': args.eval_steps,
         'online_eval_frequency': args.online_eval_frequency,
         'save_steps': args.save_steps,

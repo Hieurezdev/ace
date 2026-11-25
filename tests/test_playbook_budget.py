@@ -43,6 +43,7 @@ with patch.dict(sys.modules):
     CURATOR = load_module("budget_test_ace.core.curator", ROOT / "ace/core/curator.py")
     GENERATOR = load_module("budget_test_ace.core.generator", ROOT / "ace/core/generator.py")
     core = sys.modules["budget_test_ace.core"]
+    core.__path__ = [str(ROOT / "ace/core")]
     for name in ("Generator", "Reflector", "Curator", "BulletpointAnalyzer", "PlaybookRetriever",
                  "FailureMemoryBank", "AdversarialAgent"):
         setattr(core, name, object)

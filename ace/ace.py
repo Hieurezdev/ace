@@ -10,6 +10,7 @@ This module coordinates three agents:
 
 import os
 import json
+from collections import deque
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Any
@@ -18,6 +19,7 @@ from .core import Generator, Reflector, Curator, BulletpointAnalyzer, PlaybookRe
 from .core import AdversarialAgent
 from .core.stress_test import corrupt_playbook
 from .core.playbook_budget import PlaybookBudget, load_token_counter
+from .core.active_playbook import Candidate, ProbeCase, candidate_versions, probe_pool, select_edit
 from playbook_utils import *
 from logger import *
 from utils import *
@@ -485,6 +487,21 @@ class ACE:
         
         # Extract configuration
         config_params = self._extract_config_params(config)
+        self._active_mode = config.get("active_playbook", "off")
+        if self._active_mode != "off":
+            self._active_pool_size = config.get("active_playbook_pool_size", 6)
+            self._active_checker_cases = config.get("active_playbook_checker_cases", 3)
+            self._active_max_candidates = config.get("active_playbook_max_candidates", 3)
+            self._active_seed = config.get("seed", 42)
+            if (self._active_mode not in {"disagreement", "random"}
+                    or not 2 <= self._active_checker_cases <= self._active_pool_size
+                    or self._active_max_candidates < 2):
+                raise ValueError("Active Playbook requires 2 <= checker cases <= pool size and at least two candidates")
+            if mode != "offline" or config_params["no_ground_truth"]:
+                raise ValueError("Active Playbook requires offline Finance adaptation with ground truth")
+            if self.use_rae or self.use_adversarial or self.use_bulletpoint_analyzer or config_params["stress_noise_rate"]:
+                raise ValueError("Disable RAE, adversarial episodes, BulletpointAnalyzer and stress noise for Active Playbook")
+            self._active_history: deque[tuple[ProbeCase, str, str, str]] = deque(maxlen=4 * self._active_pool_size)
         self.curator.playbook_budget = None
         self.generator.playbook_budget = None
         if config.get('use_budgeted_curator', False):
@@ -1155,6 +1172,12 @@ class ACE:
         is_correct = data_processor.answer_is_correct(final_answer, target)
         pre_train_answer = final_answer
         pre_train_was_correct = is_correct
+        active = getattr(self, "_active_mode", "off") != "off"
+        if active:
+            self._active_history.append((
+                ProbeCase(step_id, f"{question}\n{context}", pre_train_was_correct),
+                question, context, target,
+            ))
         
         print(f"Correct: {is_correct}")
         
@@ -1322,7 +1345,10 @@ class ACE:
                 delete_harmful_margin=self.delete_harmful_margin,
                 delete_min_harmful=self.delete_min_harmful,
                 merge_candidates=self._get_curator_merge_candidates(log_dir, step_id),
+                propose_only=active,
             )
+            if active:
+                operations = self._select_active_playbook(operations, data_processor, step_id, step, log_dir, use_json_mode)
             if real_failure_memory is not None and real_failure_memory.mode == "verified":
                 real_failure_memory.record_curator_result(
                     failure_memory_id,
@@ -1389,6 +1415,51 @@ class ACE:
             tracking_dict["adversarial_result"] = adversarial_result
         
         return pre_train_answer, post_train_answer, tracking_dict
+
+    def _select_active_playbook(
+        self, operations: list[dict[str, Any]], data_processor,
+        call_id: str, step: int, log_dir: str, use_json_mode: bool,
+    ) -> list[dict[str, Any]]:
+        cases = probe_pool([entry[0] for entry in self._active_history], self._active_pool_size)
+        records = {case.key: (question, context, target) for case, question, context, target in self._active_history}
+        budget = self.curator.playbook_budget
+
+        def apply(indices: tuple[int, ...]) -> tuple[str, int]:
+            return apply_curator_operations(
+                self.playbook, [dict(operations[i]) for i in indices], self.next_global_id,
+            )
+
+        candidates = candidate_versions(
+            self.playbook, self.next_global_id, len(operations), self._active_max_candidates,
+            apply, lambda value: budget is None or budget.count_tokens(value) <= budget.limit,
+        )
+        labels = {candidate: index for index, candidate in enumerate(candidates)}
+
+        def rollout(case: ProbeCase, candidate: Candidate) -> str:
+            question, context, _ = records[case.key]
+            response, _, _ = self.generator.generate(
+                question=question, context=context, playbook=candidate.playbook,
+                reflection="(empty)", use_json_mode=use_json_mode,
+                call_id=f"{call_id}_active_{labels[candidate]}_{case.key}", log_dir=log_dir,
+            )
+            return extract_answer(response)
+
+        decision = select_edit(
+            candidates, cases, rollout, data_processor.normalized_prediction,
+            lambda case, answer: data_processor.answer_is_correct(answer, records[case.key][2]),
+            policy=self._active_mode, checker_cases=self._active_checker_cases,
+            seed=self._active_seed + step,
+        )
+        selected = candidates[decision.selected]
+        self.playbook, self.next_global_id = selected.playbook, selected.next_id
+        log_playbook_hygiene(Path(log_dir).parent, {
+            "event": "active_playbook_decision", "policy": self._active_mode, "call_id": call_id,
+            "candidate_versions": len(candidates), "probe_cases": len(cases), "rollouts": decision.rollouts,
+            "checker_calls": decision.checker_calls, "checked_cases": decision.checked_cases,
+            "candidate_scores": decision.candidate_scores, "disagreeing_cases": decision.disagreeing_cases,
+            "selected": decision.selected, "selected_operation_indices": selected.operation_indices,
+        })
+        return [operations[i] for i in selected.operation_indices]
     
     def _offline_train(
         self,
